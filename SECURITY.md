@@ -13,6 +13,6 @@
 
 ## Сообщить об уязвимости
 
-Issue на GitHub с меткой `security` или личное сообщение автору на форуме LOLZTEAM.
+Issue на GitHub с меткой `security` или личное сообщение автору [на форуме LOLZTEAM](https://t.me/Remights).
 
 Не публикуйте exploit до исправления.
