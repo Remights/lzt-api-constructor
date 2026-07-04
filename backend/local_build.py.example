@@ -1,0 +1,10 @@
+# Локальные настройки сборки .exe — НЕ коммитить в GitHub.
+# Скопируйте этот файл:  copy backend\local_build.py.example backend\local_build.py
+# Заполните URL своей AI-прокладки и соберите:  build_exe.bat
+# Значения попадут внутрь .exe (PyInstaller).
+
+# URL бесплатного AI для пользователей exe (ваша VPS-прокладка)
+PUBLIC_FREE_AI_URL = "http://YOUR-VPS:8787/api/ai/free"
+
+# Опционально: Groq-ключи в exe (обычно не нужно — ключи на VPS)
+# GROQ_KEYS = "gsk_..."

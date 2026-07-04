@@ -1,0 +1,7 @@
+# Тестовые зависимости (CI и локально: pip install -r requirements-dev.txt)
+pytest>=7.0
+# starlette 0.27 TestClient (FastAPI 0.104) несовместим с httpx 0.28+ (sync ASGITransport)
+httpx>=0.27.0,<0.28.0
+# scripts/generate_icon.py (build_exe)
+skia-python>=87.0
+Pillow>=10.0.0

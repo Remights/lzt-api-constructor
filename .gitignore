@@ -1,0 +1,40 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local / secrets
+.env
+.env.*
+!.env.example
+backend/local_build.py
+
+# VPS AI-прокладка — не публикуется (см. DEV-копию проекта)
+deploy/
+
+# Readme.io exports (canonical specs: api/specs/*.json)
+api/lztmarket/
+api/Information-market.txt
+tools/
+
+# Generated (optional: scripts/generate_icon.py regenerates from icon.svg)
+# web/icon.ico
