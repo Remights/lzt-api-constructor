@@ -13,6 +13,6 @@
 
 ## Сообщить об уязвимости
 
-Issue на GitHub с меткой `security` или личное сообщение автору [на форуме LOLZTEAM]((https://lolz.live/posts/63962780/)).
+Issue на GitHub с меткой `security` или личное сообщение автору на форуме [LOLZTEAM](https://lolz.live/posts/63962780/)
 
 Не публикуйте exploit до исправления.
