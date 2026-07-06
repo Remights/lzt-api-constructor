@@ -86,7 +86,7 @@ Object.assign(Scenario, window.ScenarioHistoryMixin, window.ScenarioEditorMixin,
 
 Зависимости тестов: `requirements-dev.txt` (`httpx<0.28` для совместимости со `starlette.TestClient`).
 
-## Офлайн
+## Оффлайн
 
 `web/vendor/`: Font Awesome (css + **webfonts/*.woff2**), QRCode (`qrcode@1.2.2`).  
 Скачивание: `scripts/download_vendor.ps1`. Шрифт UI — system stack (без Google Fonts CDN).
