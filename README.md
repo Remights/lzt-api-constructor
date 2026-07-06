@@ -13,7 +13,7 @@
 
 Цель — сделать автоматизацию Маркета доступной как для разработчиков, так и для селлеров, которые «не шарят за код».
 
-<img width="1794" height="909" alt="image" src="https://github.com/user-attachments/assets/8f8988e6-d6e3-47e3-8d8d-72b8a4e224c7" />
+<img width="1794" height="909" alt="image" src="https://github.com/user-attachments/assets/acabef24-e17b-4919-a1f4-9860c511275f" />
 
 ---
 
