@@ -223,7 +223,7 @@ python scripts/generate_icon.py   # web/icon.ico для build_exe
 
 ## 🏆 Про конкурс
 
-Проект для конкурса опенсорс-проектов **LOLZTEAM**. Краткая версия для жюри: **[CONTEST.md](CONTEST.md)**.
+Проект для конкурса опенсорс-проектов **LOLZTEAM**.
 
 **Что подчеркнуть:**
 - No-code сценарии + codegen на 7 языков + блоки под Market (снайпер, checker, фильтры)
