@@ -2,7 +2,7 @@
 import os
 import sys
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.3.0"
 GITHUB_RELEASES = "https://api.github.com/repos/Remights/lzt-api-constructor/releases/latest"
 WINDOW_TITLE = "LZT API Constructor — Визуальный конструктор и генератор кода для LOLZTEAM"
 HOST = "127.0.0.1"
@@ -31,7 +31,7 @@ def resolve_user_data_dir() -> str:
 BASE_DIR = resolve_base_dir()
 USER_DATA_DIR = resolve_user_data_dir()
 
-# Настройки release-сборки (.exe): backend/local_build.py (gitignore, см. .example)
+# Release-сборка (.exe): backend/local_build.py (gitignore, см. .example)
 BUILD_PUBLIC_FREE_AI_URL = ""
 BUILD_GROQ_KEYS = ""
 try:

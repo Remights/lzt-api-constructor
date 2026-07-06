@@ -22,8 +22,12 @@ window.ScenarioHistoryMixin = {
     },
     commit() {
         if (this._restoring) return;
-        this.autosave();
         this.pushHistory();
+        if (this._autosaveTimer) clearTimeout(this._autosaveTimer);
+        this._autosaveTimer = setTimeout(() => {
+            this._autosaveTimer = 0;
+            this.autosave();
+        }, 450);
     },
     undo() {
         if (this.histIndex <= 0) return;

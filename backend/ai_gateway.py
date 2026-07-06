@@ -12,7 +12,7 @@ from typing import Deque, Dict, List, Optional, Tuple
 
 import requests
 
-APP_VERSION = os.environ.get("LZT_APP_VERSION", "1.0.0")
+APP_VERSION = os.environ.get("LZT_APP_VERSION", "1.3.0")
 DEFAULT_FINGERPRINT_PREFIX = "LZTConstruct/"
 DEFAULT_MODEL = os.environ.get("GROQ_FREE_MODEL", "llama-3.1-8b-instant")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"

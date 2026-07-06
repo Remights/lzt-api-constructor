@@ -36,6 +36,7 @@ window.DOCS_REFERENCE = {
         { path: "discord", name: "Discord" },
         { path: "fortnite", name: "Fortnite" },
         { path: "riot", name: "Valorant / Riot" },
+        { path: "mihoyo", name: "Genshin Impact / miHoYo" },
         { path: "roblox", name: "Roblox" },
         { path: "socialclub", name: "GTA V / Social Club" },
         { path: "mihoyo", name: "miHoYo (Genshin / Honkai / ZZZ)" },

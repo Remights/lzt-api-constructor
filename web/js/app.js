@@ -78,7 +78,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         } else {
             delete currentHeaders["Authorization"];
             btnOpenModal.classList.remove("has-token");
-            tokenStatusText.innerText = (window.I18N && I18N.t("token.setup")) || "Настроить API Токен";
+            tokenStatusText.innerText = (window.I18N && I18N.t("token.setupFirst")) || "Шаг 1: API-токен";
         }
         // Даём блоку «Старт» обновить свой вид
         if (window.Scenario && Scenario.nodesLayer) Scenario.refreshStartNode();

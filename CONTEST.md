@@ -1,42 +1,47 @@
-# LZT API Constructor — конкурс LOLZTEAM
+# LZT API Constructor — для жюри конкурса LOLZTEAM
 
-## Суть
+## В двух словах
 
-No-code конструктор сценариев для Market/Forum API: прогон в приложении, экспорт бота на 7 языков.
+**No-code конструктор сценариев** для Market/Forum API → **живой прогон** в приложении → **экспорт бота на 7 языков**.
 
-Аудитория: селлеры и автоматизаторы LZT (снайперы, мониторинг, уведомления).
+Целевая аудитория: селлеры и автоматизаторы LZT, которым нужны снайперы, мониторинг цен и уведомления без написания кода с нуля.
 
-## Показатели
+## Метрики качества
 
-| Параметр | Значение |
-|----------|----------|
-| Автотесты | 53 (pytest + node) |
-| CI | GitHub Actions |
-| Backend | FastAPI + PyWebView |
-| Frontend | Модули scenario (engine, validate, editor, runtime) |
-| SSRF | Тесты в pytest |
-| Офлайн UI | `web/vendor/` |
+| Метрика | Значение |
+|---------|----------|
+| Автотесты | **53** (23 pytest + 30 node) |
+| CI | GitHub Actions на push/PR |
+| Backend | Модульный FastAPI + PyWebView (~46 строк `main.py`) |
+| Frontend | 7 модулей scenario (engine/validate/history/editor/runtime + core) |
+| SSRF | Покрыто тестами |
+| Офлайн UI | `web/vendor/` (Font Awesome + QRCode) |
 
-## Отличие от Postman / curl
+## Чем отличается от Postman / curl
 
-- Граф с условиями, циклами, снайпером, checker
-- Codegen всего сценария, не одного запроса
-- Блоки под LZT Market
-- Desktop: трей, frameless, native save
+- Визуальный **граф** с условиями, циклами, снайпером, checker
+- **Codegen всего сценария**, не одного запроса
+- Блоки под **LZT Market** (fast-buy, фильтры лотов, трекер трат)
+- **Desktop-first**: трей, frameless, native save
 
-## Быстрая проверка
+## Быстрая проверка жюри (5 мин)
 
-1. `scripts/run_tests.ps1` — 53 теста
-2. `python main.py` → шаблон «монитор Steam» → Запустить
-3. Справа — сгенерированный Python-бот
-4. [ARCHITECTURE.md](ARCHITECTURE.md)
-5. [SECURITY.md](SECURITY.md)
+1. `powershell -ExecutionPolicy Bypass -File scripts/run_tests.ps1` — **53 теста**
+2. `python main.py` → шаблон «монитор Steam» → **Запустить**
+3. Справа внизу — сгенерированный Python-бот
+4. [ARCHITECTURE.md](ARCHITECTURE.md) — схема модулей
+5. [SECURITY.md](SECURITY.md) — SSRF и токен
 
-## Ограничения
+## Демо-сценарии
 
-- Специализация под LZT, не универсальный REST-клиент
-- Токен в localStorage (есть опция шифрования)
+Готовые шаблоны в левой панели: мониторинг Steam, CSV-выгрузка, автопокупка.
+
+## Ограничения (честно)
+
+- Ниша LZT, не универсальный REST-клиент
+- TypeScript / E2E — в roadmap post-contest
+- Токен в localStorage (с опцией шифрования)
 
 ## Лицензия
 
-MIT — [LICENSE](LICENSE)
+MIT — см. [LICENSE](LICENSE)

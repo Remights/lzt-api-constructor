@@ -403,7 +403,7 @@
     }
 
     // Бесплатный AI через серверную прокладку (ключи Groq только на сервере)
-    let lztClientFp = "LZTConstruct/1.0.0";
+    let lztClientFp = "LZTConstruct/1.3.0";
     let freeAiUrl = "/api/ai/free";
     let freeAiLimit = 15;
     let freeAiRemaining = null;

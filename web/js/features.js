@@ -2,7 +2,7 @@
 (function () {
     "use strict";
 
-    const APP_VERSION = "1.0.0";
+    const APP_VERSION = "1.3.0";
     const TABS_KEY = "lzt_scenario_tabs";
     const SPEND_KEY = "lzt_profit_tracker";
 
@@ -15,7 +15,7 @@
     }
 
     function ensureProfitWidget() {
-        const runBox = document.querySelector("#panel-right .widget-box");
+        const runBox = document.querySelector(".widget-box-run");
         if (!runBox) return null;
         let el = document.getElementById("profit-widget");
         if (el) return el;
@@ -171,6 +171,16 @@
             renderTabs();
         };
 
+        const openScenarioInNewTab = (data, opts) => {
+            opts = opts || {};
+            if (!S || !data) return;
+            persistCurrent();
+            st.tabs.push({ title: data.title || S.tabTitle(st.tabs.length + 1), data: null });
+            st.active = st.tabs.length - 1;
+            saveTabsState(st);
+            S.load(data, { keepView: !!opts.keepView, demo: !!(opts.demo || data.isDemo || data._demo) });
+        };
+
         bar.querySelector("#btn-new-tab").addEventListener("click", addNewTab);
 
         const origCommit = S.commit.bind(S);
@@ -197,6 +207,7 @@
         window.LZTFeatures = Object.assign(window.LZTFeatures || {}, {
             syncActiveTab: persistCurrent,
             addScenarioTab: addNewTab,
+            openScenarioInNewTab,
         });
 
         renderTabs();
@@ -408,6 +419,21 @@
     }
 
     // ==================== АВТООБНОВЛЕНИЕ ====================
+    function parseSemver(v) {
+        const m = String(v || "").replace(/^v/i, "").match(/^(\d+)\.(\d+)\.(\d+)/);
+        return m ? [+m[1], +m[2], +m[3]] : null;
+    }
+
+    function semverGt(a, b) {
+        const pa = parseSemver(a), pb = parseSemver(b);
+        if (!pa || !pb) return String(a) !== String(b);
+        for (let i = 0; i < 3; i++) {
+            if (pa[i] > pb[i]) return true;
+            if (pa[i] < pb[i]) return false;
+        }
+        return false;
+    }
+
     async function checkUpdates() {
         const banner = document.getElementById("update-banner");
         if (banner) banner.remove();
@@ -415,19 +441,23 @@
             const r = await fetch("/api/version");
             const d = await r.json();
             const remote = (d.latest || "").replace(/^v/, "");
-            if (remote && remote !== APP_VERSION && d.download_url) {
-                const b = document.createElement("div");
-                b.id = "update-banner";
-                b.className = "update-banner";
-                b.innerHTML = `<span>Доступна версия <b>${remote}</b> (у вас ${APP_VERSION})</span>
-                    <a href="#" id="update-link">Скачать</a><button id="update-dismiss">&times;</button>`;
-                document.body.appendChild(b);
-                b.querySelector("#update-link").addEventListener("click", (e) => {
-                    e.preventDefault();
-                    fetch("/api/open-browser", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: d.download_url }) });
-                });
-                b.querySelector("#update-dismiss").addEventListener("click", () => b.remove());
-            }
+            const dismissed = localStorage.getItem("lzt_dismissed_version") || "";
+            if (!remote || !semverGt(remote, APP_VERSION) || !d.download_url) return;
+            if (dismissed === remote) return;
+            const b = document.createElement("div");
+            b.id = "update-banner";
+            b.className = "update-banner";
+            b.innerHTML = `<span>Доступна версия <b>${remote}</b> (у вас ${APP_VERSION})</span>
+                <a href="#" id="update-link">Скачать</a><button id="update-dismiss">&times;</button>`;
+            document.body.appendChild(b);
+            b.querySelector("#update-link").addEventListener("click", (e) => {
+                e.preventDefault();
+                fetch("/api/open-browser", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: d.download_url }) });
+            });
+            b.querySelector("#update-dismiss").addEventListener("click", () => {
+                localStorage.setItem("lzt_dismissed_version", remote);
+                b.remove();
+            });
         } catch (e) { /* offline */ }
     }
 
@@ -437,8 +467,8 @@
         if (!S || S._featuresHooked) return;
         S._featuresHooked = true;
         const origRun = S.run.bind(S);
-        S.run = async function () {
-            await origRun();
+        S.run = async function (opts) {
+            await origRun(opts);
             if (S._runStats) {
                 S._runStats._finalize = true;
                 updateProfit(S._runStats);
@@ -536,7 +566,7 @@
         refreshSettingsI18n();
         hookRunComplete();
         bindImportDialog();
-        setTimeout(checkUpdates, 2000);
+        setTimeout(checkUpdates, 5000);
     });
 
     // Вкладки — только после инициализации Scenario (иначе сохраняются пустые данные)

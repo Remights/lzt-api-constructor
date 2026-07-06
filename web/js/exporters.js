@@ -234,35 +234,46 @@
     function exportZip() {
         const S = window.Scenario;
         if (!S || !S.nodes.length) { S && S.flash && S.flash("Пустой сценарий", "err"); return; }
+        const lang = S.scriptLang || "python";
         const name = S.slugify(S.title);
-        let py = "";
-        try { py = S.generatePython(); } catch (e) { py = "# Ошибка генерации: " + e; }
-        const scnData = S.serialize();
-        const readme = S.buildProjectReadme
-            ? S.buildProjectReadme(S.title, scnData)
-            : `# ${S.title || "LZT бот"}\n\nСгенерировано **LZT API Constructor**.\n`;
-        const reqs = S.buildProjectRequirements
-            ? S.buildProjectRequirements(scnData)
-            : "requests>=2.31.0\n";
-        const scn = JSON.stringify(scnData, null, 2);
-        const files = [
-            { name: "bot.py", data: strBytes(py) },
-            { name: "requirements.txt", data: strBytes(reqs) },
-            { name: "README.md", data: strBytes(readme) },
-            { name: "scenario.json", data: strBytes(scn) },
-        ];
+        let zipEntries;
+        try {
+            zipEntries = S.buildProjectZipFiles ? S.buildProjectZipFiles(lang) : null;
+        } catch (e) {
+            S.flash && S.flash("Ошибка генерации: " + e.message, "err");
+            return;
+        }
+        if (!zipEntries) {
+            S.flash && S.flash("Экспорт недоступен", "err");
+            return;
+        }
+        const files = zipEntries.map(f => ({ name: f.name, data: strBytes(f.content) }));
+        const meta = S.zipLangMeta ? S.zipLangMeta(lang) : {};
+        const uiLang = (window.I18N && window.I18N.lang) || "ru";
+        const flash = uiLang === "en" ? (meta.flashEn || "Project saved (.zip)") : (meta.flashRu || "Проект сохранён (.zip)");
         downloadBlob(name + "_project.zip", buildZip(files));
-        S.flash && S.flash("Python-проект сохранён (.zip)", "ok");
+        S.flash && S.flash(flash, "ok");
+    }
+
+    function zipShareLabels() {
+        const S = window.Scenario;
+        const lang = (S && S.scriptLang) || "python";
+        const t = (k, fb) => (window.I18N && I18N.t(k)) || fb;
+        return {
+            label: t(`share.zip.${lang}.label`, t("share.zip.label", "Проект (.zip)")),
+            desc: t(`share.zip.${lang}.desc`, t("share.zip.desc", "")),
+        };
     }
 
     function rebuildShareMenu() {
         const menu = document.getElementById("share-menu");
         if (!menu || menu.dataset.bound !== "1") return;
         const t = (k, fb) => (window.I18N && I18N.t(k)) || fb;
+        const zip = zipShareLabels();
         menu.innerHTML = `<div class="add-block-cat">${t("share.cat.files", "Файлы")}</div>
             <div class="add-block-item" data-share="json"><span class="add-block-ico" style="color:#3594bc;"><i class="fa-solid fa-file-code"></i></span><span class="add-block-txt"><b>${t("share.json.label", "Сценарий (.json)")}</b><small>${t("share.json.desc", "")}</small></span></div>
             <div class="add-block-item" data-share="png"><span class="add-block-ico" style="color:#e6a23c;"><i class="fa-solid fa-image"></i></span><span class="add-block-txt"><b>${t("share.png.label", "Картинка (.png)")}</b><small>${t("share.png.desc", "")}</small></span></div>
-            <div class="add-block-item" data-share="zip"><span class="add-block-ico" style="color:#27ae60;"><i class="fa-solid fa-file-zipper"></i></span><span class="add-block-txt"><b>${t("share.zip.label", "Python-проект (.zip)")}</b><small>${t("share.zip.desc", "")}</small></span></div>`;
+            <div class="add-block-item" data-share="zip"><span class="add-block-ico" style="color:#27ae60;"><i class="fa-solid fa-file-zipper"></i></span><span class="add-block-txt"><b>${zip.label}</b><small>${zip.desc}</small></span></div>`;
         if (typeof window.appendShareGalleryItems === "function") window.appendShareGalleryItems();
     }
 

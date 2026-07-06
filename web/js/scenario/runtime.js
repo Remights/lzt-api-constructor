@@ -7,9 +7,10 @@ window.ScenarioRuntimeMixin = {
                 this.running = false;
                 return;
             }
-            this.run();
+            this.run({ demo: !!this._scenarioIsDemo });
         });
         document.getElementById("btn-run-history")?.addEventListener("click", () => this.openHistory());
+        document.getElementById("btn-export-run-log")?.addEventListener("click", () => this.exportRunLog());
         document.getElementById("chk-schedule")?.addEventListener("change", (e) => {
             if (e.target.checked) this.startSchedule(); else this.stopSchedule();
         });
@@ -58,11 +59,10 @@ window.ScenarioRuntimeMixin = {
                 this.run();
             }
         };
-        // первый запуск сразу, дальше по интервалу
-        tick();
+        // первый запуск через интервал (не сразу — новички часто включают случайно)
         this._schedTimer = setInterval(tick, ms);
-        if (statusEl) statusEl.innerHTML = `<span style="color:var(--lzt-green);">● каждые ${n} ${unitTxt}</span>`;
-        this.flash && this.flash(`Расписание включено: каждые ${n} ${unitTxt}`, "ok");
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--lzt-green);">● каждые ${n} ${unitTxt} (старт через ${n} ${unitTxt})</span>`;
+        this.flash && this.flash(`Расписание: первый запуск через ${n} ${unitTxt}`, "ok");
     },
 
     stopSchedule(keepChecked) {
@@ -80,6 +80,9 @@ window.ScenarioRuntimeMixin = {
         if (!el) return;
         el.classList.remove("running", "done", "error");
         if (state) el.classList.add(state);
+        if (state === "running" && el.scrollIntoView) {
+            try { el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" }); } catch (e) {}
+        }
     },
 
     clearRunStates() {
@@ -116,6 +119,30 @@ window.ScenarioRuntimeMixin = {
         });
     },
 
+    tableColgroup(cols) {
+        const colW = (c) => {
+            const k = String(c || "").toLowerCase();
+            if (k === "item_id" || k === "id") return 88;
+            if (k === "price") return 64;
+            if (k === "item_state" || k === "state" || k === "status") return 76;
+            if (k === "title" || k === "name" || k === "description") return null;
+            return 112;
+        };
+        return `<colgroup>${cols.map(c => {
+            const w = colW(c);
+            return w ? `<col style="width:${w}px">` : "<col>";
+        }).join("")}</colgroup>`;
+    },
+
+    tableCell(v, maxLen) {
+        if (v == null) return "";
+        if (typeof v === "object") v = JSON.stringify(v);
+        v = String(v);
+        const full = this.esc(v);
+        const short = this.esc(v.length > maxLen ? v.slice(0, maxLen) + "…" : v);
+        return `<td title="${full}">${short}</td>`;
+    },
+
     // Найти в ответе первый массив объектов (items / список верхнего уровня)
     findRows(data) {
         if (Array.isArray(data) && data.length && typeof data[0] === "object") return data;
@@ -136,13 +163,9 @@ window.ScenarioRuntimeMixin = {
         if (box.dataset.fresh !== "1") { box.innerHTML = ""; box.dataset.fresh = "1"; }
         const cols = [];
         rows.slice(0, 20).forEach(r => Object.keys(r).forEach(k => { if (!cols.includes(k) && cols.length < 6) cols.push(k); }));
-        const cell = (v) => {
-            if (v == null) return "";
-            if (typeof v === "object") v = JSON.stringify(v);
-            v = String(v); return this.esc(v.length > 40 ? v.slice(0, 40) + "…" : v);
-        };
-        const head = cols.map(c => `<th>${this.esc(c)}</th>`).join("");
-        const body = rows.slice(0, 8).map(r => `<tr>${cols.map(c => `<td>${cell(r[c])}</td>`).join("")}</tr>`).join("");
+        const head = cols.map(c => `<th title="${this.esc(c)}">${this.esc(c)}</th>`).join("");
+        const body = rows.slice(0, 8).map(r => `<tr>${cols.map(c => this.tableCell(r[c], 80)).join("")}</tr>`).join("");
+        const colgroup = this.tableColgroup(cols);
         const wrap = document.createElement("div");
         wrap.className = "log-row log-row-enter";
         wrap.innerHTML = `<div class="result-preview">
@@ -154,7 +177,7 @@ window.ScenarioRuntimeMixin = {
                     <button class="result-dl-btn" data-fmt="json"><i class="fa-solid fa-file-code"></i> JSON</button>
                 </span>
             </div>
-            <div class="result-table-wrap"><table class="result-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
+            <div class="result-table-wrap"><table class="result-table dt-table">${colgroup}<thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
         </div>`;
         wrap.querySelectorAll(".result-dl-btn[data-fmt]").forEach(b => b.addEventListener("click", () => {
             const fmt = b.dataset.fmt;
@@ -192,7 +215,7 @@ window.ScenarioRuntimeMixin = {
                         <button class="btn-token" id="dt-csv"><i class="fa-solid fa-file-csv"></i> CSV</button>
                         <button class="btn-token" id="dt-json"><i class="fa-solid fa-file-code"></i> JSON</button>
                     </div>
-                    <div style="overflow:auto; flex:1;"><table class="result-table dt-table"><thead><tr id="dt-head"></tr></thead><tbody id="dt-body"></tbody></table></div>
+                    <div style="overflow:auto; flex:1;"><table class="result-table dt-table" id="dt-table">${this.tableColgroup(cols)}<thead><tr id="dt-head"></tr></thead><tbody id="dt-body"></tbody></table></div>
                 </div>
             </div>`;
         document.body.appendChild(el);
@@ -241,7 +264,7 @@ window.ScenarioRuntimeMixin = {
             const r = view();
             countEl.textContent = `· ${r.length} из ${rows.length}`;
             bodyEl.innerHTML = r.slice(0, 500).map(row =>
-                `<tr>${cols.map(c => { let v = String(cellVal(row, c)); return `<td title="${this.esc(v)}">${this.esc(v.length > 60 ? v.slice(0, 60) + "…" : v)}</td>`; }).join("")}</tr>`
+                `<tr>${cols.map(c => this.tableCell(cellVal(row, c), 120)).join("")}</tr>`
             ).join("");
         };
         el.querySelector("#dt-search").addEventListener("input", (e) => { state.q = e.target.value.trim(); renderBody(); });
@@ -253,9 +276,54 @@ window.ScenarioRuntimeMixin = {
     // Проверка сценария: возвращает { errors, warnings }
     validateScenario() {
         return window.ScenarioValidate.validate(this.nodes, this.edges, {
-            hasToken: !!(window.LZTToken && window.LZTToken.get()),
+            hasToken: this._demoMode || !!(window.LZTToken && window.LZTToken.get()),
+            demoMode: !!this._demoMode,
             nodeTypes: NODE_TYPES,
         });
+    },
+
+    async apiTest(body) {
+        if (this._demoMode && window.LZTDemo) return window.LZTDemo.mockApiTest(body);
+        const res = await fetch("/api/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        return res.json();
+    },
+
+    async scenarioAiCall(prompt, system) {
+        if (this._demoMode && window.LZTDemo) return window.LZTDemo.mockAiResponse(prompt);
+        let cfg = {};
+        try { cfg = JSON.parse(localStorage.getItem("lzt_ai_cfg") || "{}"); } catch (e) {}
+        const key = (localStorage.getItem("lzt_ai_key") || "").trim();
+        if (!key) throw new Error("Нет API-ключа ИИ — настройте в AI+ или настройках");
+        const res = await fetch("/api/ai", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                base_url: (cfg.base || "https://api.openai.com/v1").replace(/\/+$/, ""),
+                api_key: key,
+                model: cfg.model || "gpt-4o-mini",
+                system: system || "Ответь кратко. Если просят JSON — только валидный JSON без markdown.",
+                prompt,
+            }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || "Ошибка ИИ");
+        return data.content;
+    },
+
+    _playSniperBeep() {
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const o = ctx.createOscillator();
+            const g = ctx.createGain();
+            o.connect(g); g.connect(ctx.destination);
+            o.frequency.value = 1046; g.gain.value = 0.1;
+            o.start(); o.stop(ctx.currentTime + 0.12);
+        } catch (e) {}
+    },
+
+    _sniperToast(id, price) {
+        if (window.LZTToast) window.LZTToast("Снайпер", `Куплен лот #${id} за ${price}₽`, { type: "success" });
+        this._playSniperBeep();
     },
 
     // Универсальный исполнитель графа (основной сценарий + под-сценарии)
@@ -313,8 +381,7 @@ window.ScenarioRuntimeMixin = {
                     while (true) {
                         let respHeaders = {};
                         try {
-                            const res = await fetch("/api/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, method: req.method, params, headers, body, proxy: ctx.proxy || null, timeout: req.timeout || 15 }) });
-                            const result = await res.json();
+                            const result = await this.apiTest({ url, method: req.method, params, headers, body, proxy: ctx.proxy || null, timeout: req.timeout || 15 });
                             if (result.success) {
                                 data = result.data; code = result.status_code || 200; respHeaders = result.headers || {};
                                 ok = code < 400;
@@ -400,10 +467,16 @@ window.ScenarioRuntimeMixin = {
                     const text = this.resolveVars(n.text, ctx);
                     this.log(`<span class="log-time">${this.now()}</span> <i class="fa-solid fa-paper-plane" style="color:#0088cc;"></i> Уведомление: <span class="log-dim">${this.esc(text.slice(0, 60))}</span>`);
                     try {
+                        if (this._demoMode) {
+                            this.setNodeState(node.id, "done");
+                            this.log(`<span class="log-ok">✓ [демо] уведомление отправлено</span>`);
+                            if (window.LZTToast) window.LZTToast("Telegram (демо)", text.slice(0, 80), { type: "info" });
+                        } else {
                         const res = await fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: n.channel, text, tg_token: n.tgToken, tg_chat: n.tgChat, discord_url: n.discordUrl }) });
                         const r = await res.json();
                         if (r.success) { this.setNodeState(node.id, "done"); this.log(`<span class="log-ok">✓ отправлено</span>`); }
                         else { this.setNodeState(node.id, "error"); this.log(`<span class="log-err">✕ ${this.esc(r.error || "не отправлено")}</span>`); }
+                        }
                     } catch (err) { this.setNodeState(node.id, "error"); this.log(`<span class="log-err">✕ ${this.esc(String(err))}</span>`); }
                     cur = this.followEdge(node.id, "out");
                 } else if (node.type === "logmsg") {
@@ -493,8 +566,7 @@ window.ScenarioRuntimeMixin = {
                     this.log(`<span class="log-time">${this.now()}</span> <i class="fa-solid fa-user-check"></i> Проверка лота <b>${this.esc(String(itemId))}</b>`);
                     let ok = false, errText = "";
                     try {
-                        const res = await fetch("/api/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, method: "GET", params: {}, headers: Object.assign({}, currentHeaders || {}), body: null, proxy: ctx.proxy || null, timeout: 15 }) });
-                        const result = await res.json();
+                        const result = await this.apiTest({ url, method: "GET", params: {}, headers: Object.assign({}, currentHeaders || {}), body: null, proxy: ctx.proxy || null, timeout: 15 });
                         if (result.success && result.data) {
                             const item = result.data.item || result.data;
                             const sold = item.item_state === "paid" || item.item_state === "deleted" || item.is_sold;
@@ -505,6 +577,38 @@ window.ScenarioRuntimeMixin = {
                     this.setNodeState(node.id, ok ? "done" : "error");
                     this.log(ok ? `<span class="log-ok">✓ аккаунт OK</span>` : `<span class="log-err">✕ ${this.esc(errText)}</span>`);
                     cur = this.followEdge(node.id, ok ? "ok" : "fail");
+                } else if (node.type === "ai") {
+                    const a = node.ai || {};
+                    const rawSource = this.getPath(ctx, a.source);
+                    let batch = Array.isArray(rawSource) ? rawSource : (rawSource != null ? [rawSource] : []);
+                    if (a.batch !== false) batch = batch.slice(0, parseInt(a.batchLimit, 10) || 50);
+                    const compact = batch.map(it => ({
+                        item_id: it.item_id,
+                        price: it.price,
+                        title: String(it.title || "").slice(0, 80),
+                    }));
+                    const userPrompt = `${this.resolveVars(a.prompt || "", ctx)}\n\nЛоты (JSON):\n${JSON.stringify(compact)}`;
+                    this.log(`<span class="log-time">${this.now()}</span> <i class="fa-solid fa-brain" style="color:#9b59b6;"></i> ИИ: ${compact.length} лот(ов)`);
+                    try {
+                        let raw = await this.scenarioAiCall(userPrompt);
+                        if (typeof raw === "string") raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+                        let parsed;
+                        try { parsed = typeof raw === "string" ? JSON.parse(raw) : raw; } catch (e) { parsed = { raw }; }
+                        const outVar = a.outputVar || "ai_result";
+                        ctx.vars[outVar] = parsed;
+                        ctx.last = parsed;
+                        this.lastRunData[node.id] = parsed;
+                        this.setNodeState(node.id, "done");
+                        const recs = Array.isArray(parsed.items) ? parsed.items.length : 0;
+                        this.log(`<span class="log-ok">✓ ИИ</span> <span class="log-dim">${recs ? recs + " рекомендаций → vars." + outVar : this.summary(parsed)}</span>`);
+                        cur = this.followEdge(node.id, "success");
+                        if (!cur) this.log(`<span class="log-dim">→ выход «Успех» ни к чему не подключён, стоп.</span>`);
+                    } catch (err) {
+                        this.setNodeState(node.id, "error");
+                        this.log(`<span class="log-err">✕ ИИ: ${this.esc(String(err.message || err))}</span>`);
+                        cur = this.followEdge(node.id, "error");
+                        if (!cur) { this.log(`<span class="log-dim">→ выход «Ошибка» не подключён, стоп.</span>`); return null; }
+                    }
                 } else if (node.type === "sniper") {
                     const sn = node.sniper;
                     const items = this.getPath(ctx, sn.source);
@@ -523,13 +627,13 @@ window.ScenarioRuntimeMixin = {
                             const url = `https://prod-api.lzt.market/${id}/fast-buy`;
                             this.log(`<span class="log-time">${this.now()}</span> <i class="fa-solid fa-crosshairs"></i> Покупка <b>${id}</b> за ${price}₽…`);
                             try {
-                                const res = await fetch("/api/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, method: "POST", params: {}, headers: Object.assign({}, currentHeaders || {}), body: null, proxy: ctx.proxy || null, timeout: 20 }) });
-                                const result = await res.json();
+                                const result = await this.apiTest({ url, method: "POST", params: {}, headers: Object.assign({}, currentHeaders || {}), body: null, proxy: ctx.proxy || null, timeout: 20 });
                                 if (result.success && (result.status_code || 200) < 400) {
                                     ctx.vars._lzt_spend += price;
                                     stats.spent = (stats.spent || 0) + price;
                                     bought = true; port = "bought";
                                     this.log(`<span class="log-ok">✓ Куплено! Потрачено: ${ctx.vars._lzt_spend}₽</span>`);
+                                    this._sniperToast(id, price);
                                     if (window.LZTFeatures) window.LZTFeatures.updateProfit(stats);
                                     break;
                                 } else this.log(`<span class="log-err">✕ ${this.esc(result.error || "не куплено")}</span>`);
@@ -578,12 +682,26 @@ window.ScenarioRuntimeMixin = {
         return cur;
     },
 
-    async run() {
+    async run(opts = {}) {
+        this._demoMode = !!(opts && opts.demo);
+        try {
         if (this._runBusy) return;
+        const t = (k, fb) => (window.I18N && I18N.t(k)) || fb;
         const start = this.nodes.find(n => n.type === "start");
-        if (!start) { this.log(`<span class="log-err">Нет блока «Старт».</span>`); return; }
+        if (!start) {
+            const msg = t("run.err.noStart", "Нет блока «Старт».");
+            this.log(`<span class="log-err">${this.esc(msg)}</span>`);
+            if (window.LZTDialog) await LZTDialog.alert(msg, { title: t("run.err.noConnectionTitle", "Ошибка") });
+            return;
+        }
         const startCur = this.edgeTarget(start.id, "out");
-        if (!startCur) { this.log(`<span class="log-err">К «Старту» ничего не подключено.</span>`); return; }
+        if (!startCur) {
+            const msg = t("run.err.noConnection", "От «Старта» ничего не подключено.");
+            this.log(`<span class="log-err"><i class="fa-solid fa-circle-xmark"></i> ${this.esc(msg.split("\n")[0])}</span>`);
+            if (window.LZTDialog) await LZTDialog.alert(msg, { title: t("run.err.noConnectionTitle", "Сначала соедините блоки") });
+            else this.flash?.(msg.split("\n")[0], "err");
+            return;
+        }
 
         const check = this.validateScenario();
         if (check.errors.length) {
@@ -599,7 +717,7 @@ window.ScenarioRuntimeMixin = {
         debugBox?.classList.add("run-active");
         this.clearRunStates();
         this._resetLogBoxes();
-        this.log(`<span class="log-time">${this.now()}</span> <b>Старт сценария</b>`);
+        this.log(`<span class="log-time">${this.now()}</span> <b>Старт сценария</b>${this._demoMode ? ' <span class="log-warn">· демо</span>' : ""}`);
         check.warnings.forEach(w => this.log(`<span class="log-warn"><i class="fa-solid fa-triangle-exclamation"></i> ${this.esc(w)}</span>`));
         this.updateRunButton(true);
         document.getElementById("run-status").textContent = (window.I18N && I18N.t("run.status.running")) || "выполняется…";
@@ -638,5 +756,8 @@ window.ScenarioRuntimeMixin = {
         document.getElementById("run-status").textContent = (window.I18N && I18N.t("run.status.done")) || "готово";
         this.log(`<span class="log-time">${this.now()}</span> <b>Сценарий завершён</b> · шагов: ${steps}`);
         this.recordHistory(stats, steps);
+        } finally {
+            this._demoMode = false;
+        }
     },
 };

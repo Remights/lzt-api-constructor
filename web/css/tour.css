@@ -1,0 +1,523 @@
+/* Spotlight tour — вынесено из lzt_style.css */
+
+:root[data-theme="light"] .tour-text b,
+:root[data-theme="light"] .tour-title { color: #111; }
+:root[data-theme="light"] .tour-ico { border-color: var(--border-color); }
+
+/* Обучающий тур */
+.tour-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+}
+.tour-overlay::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    pointer-events: none;
+}
+.tour-overlay::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    opacity: 0;
+    animation: tour-fade 0.2s ease forwards;
+    pointer-events: none;
+}
+@keyframes tour-fade { from { opacity: 0; } to { opacity: 1; } }
+.tour-box {
+    position: relative;
+    z-index: 1;
+    width: 440px;
+    max-width: 92vw;
+    background: var(--bg-card, #1e1e22);
+    border: 1px solid var(--border-hover, #3a3a40);
+    border-radius: 14px;
+    padding: 26px 26px 20px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    text-align: center;
+}
+.tour-ico { width: 58px; height: 58px; margin: 0 auto 14px; border-radius: 50%; background: rgba(0,186,120,0.14); color: var(--lzt-green, #00ba78); display: flex; align-items: center; justify-content: center; font-size: 24px; }
+.tour-title { font-size: 18px; font-weight: 700; color: #fff; margin-bottom: 10px; }
+.tour-text { font-size: 13.5px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 18px; }
+.tour-text b { color: #fff; }
+.tour-dots { display: flex; gap: 6px; justify-content: center; margin-bottom: 18px; }
+.tour-dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--border-hover, #3a3a40); transition: background 0.2s; }
+.tour-dots span.on { background: var(--lzt-green, #00ba78); }
+.tour-actions { display: flex; align-items: center; gap: 8px; }
+.tour-lang-pick { display: flex; gap: 10px; justify-content: center; margin-bottom: 16px; }
+.tour-lang-btn {
+    min-width: 120px;
+    padding: 8px 18px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.tour-lang-btn:hover {
+    border-color: var(--lzt-green);
+    color: var(--text-primary);
+}
+.tour-lang-btn.active {
+    background: var(--lzt-green);
+    border-color: var(--lzt-green);
+    color: #fff;
+}
+.tour-lang-btn.active:hover {
+    background: var(--lzt-green-hover);
+    border-color: var(--lzt-green-hover);
+    color: #fff;
+}
+
+/* Spotlight-тур — 4 панели затемнения (без SVG-маски, без box-shadow 9999px) */
+.tour-spotlight-root {
+    position: fixed;
+    inset: 0;
+    z-index: 10057;
+    pointer-events: none;
+}
+.tour-spotlight-cutouts {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+}
+.tour-spotlight-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    pointer-events: none;
+    z-index: 1;
+}
+.tour-dim {
+    position: fixed;
+    background: rgba(0, 0, 0, 0.72);
+    pointer-events: none;
+    z-index: 1;
+}
+.tour-dim-top { top: 0; left: 0; right: 0; }
+.tour-dim-bottom { left: 0; right: 0; }
+.tour-spot-ring-box {
+    position: fixed;
+    z-index: 2;
+    border: 2px solid rgba(0, 186, 120, 0.85);
+    border-radius: 10px;
+    pointer-events: none;
+    box-sizing: border-box;
+}
+.tour-spot-ring-box.is-port { border-radius: 50%; }
+body.tour-active .sport.tour-port-active {
+    transform: translate(-50%, -50%) scale(1.3);
+    background: var(--lzt-green, #00ba78);
+    border-color: var(--lzt-green, #00ba78);
+    box-shadow: 0 0 0 3px rgba(0, 186, 120, 0.35);
+    z-index: 6;
+}
+.tour-task-wait {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--lzt-green, #00ba78);
+    margin: 10px 0 8px;
+    padding: 8px 10px;
+    background: rgba(0, 186, 120, 0.08);
+    border-radius: 8px;
+    border: 1px dashed rgba(0, 186, 120, 0.35);
+}
+.tour-task-wait i { opacity: 0.85; }
+.tour-task-done {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--lzt-green, #00ba78);
+    margin: 10px 0 8px;
+    padding: 8px 10px;
+    background: rgba(0, 186, 120, 0.12);
+    border-radius: 8px;
+}
+.tour-task-done i { font-size: 16px; }
+.tour-spotlight-tooltip {
+    position: fixed;
+    z-index: 10060;
+    width: min(340px, calc(100vw - 24px));
+    background: var(--bg-card, #1e1e22);
+    border: 1px solid var(--border-hover, #3a3a40);
+    border-radius: 12px;
+    padding: 14px 16px 12px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+    pointer-events: auto;
+    text-align: left;
+    user-select: text;
+}
+body.tour-active .floating-panel-backdrop {
+    pointer-events: none;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+body.tour-active .modal-overlay,
+body.tour-active .lzt-dialog-overlay,
+body.tour-active .tour-overlay::before {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+body.tour-active .add-block-menu,
+body.tour-active .node-popover {
+    transition: none !important;
+}
+body.tour-active .canvas-edges .edge-active,
+body.tour-active .snode.running {
+    animation: none !important;
+}
+body.tour-active .log-row-enter {
+    animation: none !important;
+}
+.tour-spotlight-tooltip--center {
+    width: min(440px, 92vw);
+    text-align: center;
+    padding: 22px 24px 18px;
+}
+.tour-spotlight-tooltip-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 8px;
+}
+.tour-spotlight-tooltip-head i {
+    color: var(--lzt-green, #00ba78);
+    font-size: 16px;
+}
+.tour-spotlight-tooltip .tour-text {
+    text-align: left;
+    margin-bottom: 10px;
+}
+.tour-spotlight-tooltip--center .tour-text { text-align: center; }
+.tour-step-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.tour-actions--compact { gap: 6px; }
+.btn-token-sm, .tour-actions .btn-save.btn-token-sm {
+    font-size: 11px;
+    padding: 5px 10px;
+}
+
+/* --- Расширения spotlight-тура (анимации, layout) --- */
+@keyframes tour-root-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes tour-dim-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes tour-ring-glow {
+    0%, 100% {
+        box-shadow:
+            0 0 0 0 rgba(0, 186, 120, 0.55),
+            0 0 18px rgba(0, 186, 120, 0.2);
+        border-color: rgba(0, 186, 120, 0.88);
+    }
+    50% {
+        box-shadow:
+            0 0 0 8px rgba(0, 186, 120, 0.22),
+            0 0 36px rgba(0, 186, 120, 0.55);
+        border-color: rgba(80, 255, 190, 1);
+    }
+}
+@keyframes tour-ring-bump {
+    0% { transform: scale(1); }
+    40% { transform: scale(1.028); }
+    100% { transform: scale(1); }
+}
+@keyframes tour-ring-aura {
+    0%, 100% { opacity: 0.35; transform: scale(1); }
+    50% { opacity: 0.85; transform: scale(1.04); }
+}
+@keyframes tour-tooltip-in {
+    from {
+        opacity: 0;
+        transform: translateY(12px) scale(0.96);
+        filter: blur(2px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+        filter: blur(0);
+    }
+}
+@keyframes tour-tooltip-in-center {
+    from {
+        opacity: 0;
+        transform: translate(-50%, calc(-50% + 14px)) scale(0.95);
+        filter: blur(2px);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+        filter: blur(0);
+    }
+}
+@keyframes tour-tooltip-praise {
+    0% { transform: scale(1); }
+    20% {
+        transform: scale(1.025);
+        box-shadow:
+            0 0 0 0 rgba(0, 186, 120, 0.45),
+            0 22px 56px rgba(0, 0, 0, 0.58);
+    }
+    100% {
+        transform: scale(1);
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+    }
+}
+@keyframes tour-tooltip-praise-center {
+    0% { transform: translate(-50%, -50%) scale(1); }
+    20% {
+        transform: translate(-50%, -50%) scale(1.025);
+        box-shadow:
+            0 0 0 0 rgba(0, 186, 120, 0.45),
+            0 22px 56px rgba(0, 0, 0, 0.58);
+    }
+    100% {
+        transform: translate(-50%, -50%) scale(1);
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+    }
+}
+@keyframes tour-port-beacon {
+    0%, 100% {
+        transform: translate(-50%, -50%) scale(1.3);
+        box-shadow: 0 0 0 3px rgba(0, 186, 120, 0.35);
+    }
+    50% {
+        transform: translate(-50%, -50%) scale(1.45);
+        box-shadow: 0 0 0 8px rgba(0, 186, 120, 0.18), 0 0 22px rgba(0, 186, 120, 0.55);
+    }
+}
+@keyframes tour-hint-blink {
+    0%, 100% {
+        color: var(--text-muted);
+        opacity: 0.55;
+    }
+    50% {
+        color: var(--lzt-green, #00ba78);
+        opacity: 1;
+        text-shadow: 0 0 10px rgba(0, 186, 120, 0.55);
+    }
+}
+@keyframes tour-hint-pulse {
+    0%, 100% {
+        border-color: rgba(0, 186, 120, 0.32);
+        background: rgba(0, 186, 120, 0.07);
+    }
+    50% {
+        border-color: rgba(0, 186, 120, 0.72);
+        background: rgba(0, 186, 120, 0.16);
+    }
+}
+@keyframes tour-hand-bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(4px); }
+}
+@keyframes tour-done-pop {
+    0% { opacity: 0; transform: scale(0.9); }
+    55% { transform: scale(1.04); }
+    100% { opacity: 1; transform: scale(1); }
+}
+@keyframes tour-check-spin {
+    from { transform: rotate(-40deg) scale(0.5); opacity: 0; }
+    to { transform: rotate(0) scale(1); opacity: 1; }
+}
+@keyframes tour-ico-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+}
+@keyframes tour-dot-pulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 186, 120, 0.35); }
+    50% { transform: scale(1.4); box-shadow: 0 0 10px rgba(0, 186, 120, 0.55); }
+}
+@keyframes tour-head-icon-pop {
+    0% { transform: scale(0.85); opacity: 0.6; }
+    60% { transform: scale(1.08); opacity: 1; }
+    100% { transform: scale(1); }
+}
+
+.tour-spotlight-root.tour-root-enter {
+    animation: tour-root-in 0.28s ease forwards;
+}
+.tour-dim {
+    animation: tour-dim-in 0.22s ease forwards;
+}
+.tour-spot-ring-box {
+    transform-origin: center center;
+    overflow: visible;
+    transition:
+        top 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+        left 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+        width 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+        height 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.tour-spot-ring-box::before {
+    content: "";
+    position: absolute;
+    inset: -6px;
+    border-radius: inherit;
+    border: 1px solid rgba(0, 186, 120, 0.35);
+    pointer-events: none;
+}
+.tour-spot-ring-box::after {
+    content: "";
+    position: absolute;
+    inset: -12px;
+    border-radius: inherit;
+    background: radial-gradient(ellipse at center, rgba(0, 186, 120, 0.18) 0%, transparent 70%);
+    pointer-events: none;
+    opacity: 0.75;
+}
+body.tour-fx-on .tour-spot-ring-box.tour-ring-pulse::after {
+    animation: tour-ring-aura 2.6s ease-in-out infinite reverse !important;
+}
+body.tour-fx-on .tour-spot-ring-box.tour-ring-pulse {
+    animation: tour-ring-glow 1.8s ease-in-out infinite !important;
+}
+body.tour-fx-on .tour-spot-ring-box.tour-ring-pulse::before {
+    animation: tour-ring-aura 2.4s ease-in-out infinite !important;
+}
+body.tour-fx-on .tour-spot-ring-box.tour-ring-bump {
+    animation: tour-ring-bump 0.42s cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+body.tour-fx-on .tour-spot-ring-box.tour-ring-pulse.tour-ring-bump {
+    animation:
+        tour-ring-bump 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+        tour-ring-glow 1.8s ease-in-out 0.42s infinite !important;
+}
+body.tour-fx-on .tour-spot-ring-box.tour-ring-glow-only {
+    border-color: rgba(0, 186, 120, 0.35);
+    animation: none !important;
+    box-shadow: 0 0 28px rgba(0, 186, 120, 0.28);
+}
+body.tour-fx-on .tour-spot-ring-box.tour-ring-glow-only::before,
+body.tour-fx-on .tour-spot-ring-box.tour-ring-glow-only::after {
+    animation: none !important;
+    opacity: 0;
+    border-color: transparent;
+}
+body.tour-fx-on .sport.tour-port-active {
+    animation: tour-port-beacon 1.6s ease-in-out infinite !important;
+}
+body.tour-fx-on .snode-edit-hint.tour-hint-blink {
+    animation: tour-hint-blink 1.4s ease-in-out infinite !important;
+}
+body.tour-fx-on .tour-task-wait {
+    animation: tour-hint-pulse 2.2s ease-in-out infinite !important;
+}
+body.tour-fx-on .tour-task-wait i {
+    animation: tour-hand-bounce 1.15s ease-in-out infinite !important;
+}
+body.tour-fx-on .tour-task-done {
+    animation: tour-done-pop 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
+}
+body.tour-fx-on .tour-task-done i {
+    animation: tour-check-spin 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
+}
+body.tour-fx-on .tour-spotlight-tooltip.tour-tooltip-enter:not(.tour-spotlight-tooltip--center) {
+    animation: tour-tooltip-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
+}
+body.tour-fx-on .tour-spotlight-tooltip--center.tour-tooltip-enter {
+    animation: tour-tooltip-in-center 0.34s cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
+}
+body.tour-fx-on .tour-spotlight-tooltip.tour-tooltip-praise:not(.tour-spotlight-tooltip--center) {
+    animation: tour-tooltip-praise 0.55s cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+body.tour-fx-on .tour-spotlight-tooltip--center.tour-tooltip-praise {
+    animation: tour-tooltip-praise-center 0.55s cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+body.tour-fx-on .tour-spotlight-tooltip--center .tour-ico {
+    animation: tour-ico-float 3.2s ease-in-out infinite !important;
+}
+body.tour-fx-on .tour-spotlight-tooltip-head i {
+    animation: tour-head-icon-pop 0.45s cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+body.tour-fx-on .tour-dots span.on {
+    animation: tour-dot-pulse 2.2s ease-in-out infinite !important;
+}
+body.tour-fx-on .tour-spotlight-root.tour-root-enter {
+    animation: tour-root-in 0.28s ease forwards !important;
+}
+body.tour-fx-on .tour-dim,
+body.tour-fx-on .tour-spotlight-backdrop {
+    animation: tour-dim-in 0.22s ease forwards !important;
+}
+.tour-spotlight-tooltip--center {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+.tour-progress {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+.tour-progress .tour-dots {
+    margin-bottom: 0;
+}
+.tour-progress .tour-step-label {
+    margin-bottom: 0;
+    letter-spacing: 0.02em;
+}
+.tour-spotlight-tooltip--center .tour-actions {
+    justify-content: space-between;
+}
+.tour-actions-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+.tour-tip-passive {
+    pointer-events: none;
+}
+.tour-tip-passive .tour-actions,
+.tour-tip-passive .tour-actions--compact {
+    pointer-events: auto;
+}
+
+body.tour-active .floating-panel-backdrop,
+body.tour-active .modal-overlay,
+body.tour-active .lzt-dialog-overlay,
+body.tour-active .tour-overlay::before {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+body.tour-active .add-block-menu,
+body.tour-active .node-popover {
+    transition: none !important;
+}
+body.tour-active .canvas-edges .edge-active,
+body.tour-active .snode.running,
+body.tour-active .log-row-enter {
+    animation: none !important;
+}
+
+/* Анимации тура не отключаются системным prefers-reduced-motion */

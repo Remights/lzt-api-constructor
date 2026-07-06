@@ -6,5 +6,8 @@
 # URL бесплатного AI для пользователей exe (ваша VPS-прокладка)
 PUBLIC_FREE_AI_URL = "http://YOUR-VPS:8787/api/ai/free"
 
+# ID в примерах шаблонов (форум, переводы и т.д.)
+# DEFAULT_USER_ID = 3450027
+
 # Опционально: Groq-ключи в exe (обычно не нужно — ключи на VPS)
 # GROQ_KEYS = "gsk_..."

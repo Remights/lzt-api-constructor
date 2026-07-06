@@ -40,3 +40,9 @@ jobs:
 
       - name: Node tests — scenario validate
         run: node tests/scenario_validate.test.js
+
+      - name: Node tests — tour spotlight
+        run: node tests/tour_spotlight.test.js
+
+      - name: Node tests — tour steps
+        run: node tests/tour_steps.test.js

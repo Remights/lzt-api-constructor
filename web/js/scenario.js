@@ -49,10 +49,11 @@ const Scenario = {
         this.renderExamples();
         this.renderSaved();
 
-        // Сначала вкладки (если есть), иначе автосохранение черновика
+        // Сначала вкладки (если есть), иначе автосохранение черновика — но не до первого обучения
+        const isFirstTour = !localStorage.getItem("lzt_tour_done");
         try {
-            let tabsRaw = localStorage.getItem("lzt_scenario_tabs");
-            if (window.LZTScenarioStore) {
+            let tabsRaw = !isFirstTour ? localStorage.getItem("lzt_scenario_tabs") : null;
+            if (!isFirstTour && window.LZTScenarioStore) {
                 const diskTabs = await LZTScenarioStore.loadTabs();
                 if (diskTabs) tabsRaw = JSON.stringify(diskTabs);
             }
@@ -69,8 +70,8 @@ const Scenario = {
         } catch (e) { /* битые вкладки — пробуем автосейв */ }
 
         // Восстановление незавершённой работы (автосохранение)
-        let auto = localStorage.getItem("lzt_scenario_autosave");
-        if (window.LZTScenarioStore) {
+        let auto = !isFirstTour ? localStorage.getItem("lzt_scenario_autosave") : null;
+        if (!isFirstTour && window.LZTScenarioStore) {
             const diskAuto = await LZTScenarioStore.loadAutosave();
             if (diskAuto) auto = JSON.stringify(diskAuto);
         }
@@ -87,99 +88,22 @@ const Scenario = {
         }
         this.newScenario();
         this.maybeStartTour();
-        setTimeout(() => this.fitView(), 80);
+        requestAnimationFrame(() => requestAnimationFrame(() => this.fitView()));
         window.dispatchEvent(new Event("lzt-scenario-ready"));
     },
 
     maybeStartTour() {
         if (localStorage.getItem("lzt_tour_done") || this._tourAutoStarted) return;
         this._tourAutoStarted = true;
-        localStorage.setItem("lzt_tour_done", "1");
-        setTimeout(() => this.startTour(), 500);
-    },
-
-    // ==================== ОБУЧАЮЩИЙ ТУР ====================
-
-    tourSteps() {
-        const t = (k) => (window.I18N && I18N.t(k)) || k;
-        return [
-            { icon: "fa-language", title: t("tour.s0.title"), text: t("tour.s0.text"), langPick: true },
-            { icon: "fa-key", title: t("tour.s1.title"), text: t("tour.s1.text") },
-            { icon: "fa-plus", title: t("tour.s2.title"), text: t("tour.s2.text") },
-            { icon: "fa-arrow-right-arrow-left", title: t("tour.s3.title"), text: t("tour.s3.text") },
-            { icon: "fa-play", title: t("tour.s4.title"), text: t("tour.s4.text") },
-            { icon: "fa-robot", title: t("tour.s5.title"), text: t("tour.s5.text") },
-            { icon: "fa-lightbulb", title: t("tour.s6.title"), text: t("tour.s6.text") },
-        ];
+        setTimeout(() => this.startTour(), 600);
     },
 
     startTour() {
-        const old = document.getElementById("tour-overlay");
-        if (old) old.remove();
-        let steps = this.tourSteps();
-        let i = 0;
-        const ov = document.createElement("div");
-        ov.id = "tour-overlay";
-        ov.className = "tour-overlay";
-        const t = (k) => (window.I18N && I18N.t(k)) || k;
-        const render = () => {
-            steps = this.tourSteps();
-            const s = steps[i];
-            if (s.langPick) {
-                const cur = window.I18N?.lang || "ru";
-                ov.innerHTML = `<div class="tour-box">
-                    <div class="tour-ico"><i class="fa-solid ${s.icon}"></i></div>
-                    <div class="tour-title">${s.title}</div>
-                    <div class="tour-text">${s.text}</div>
-                    <div class="tour-lang-pick">
-                        <button type="button" class="tour-lang-btn${cur === "ru" ? " active" : ""}" id="tour-lang-ru">${t("tour.langRu")}</button>
-                        <button type="button" class="tour-lang-btn${cur === "en" ? " active" : ""}" id="tour-lang-en">${t("tour.langEn")}</button>
-                    </div>
-                    <div class="tour-dots">${steps.map((_, k) => `<span class="${k === i ? "on" : ""}"></span>`).join("")}</div>
-                    <div class="tour-actions">
-                        <button class="btn-token" id="tour-skip">${t("tour.skip")}</button>
-                        <div style="flex:1;"></div>
-                        <button class="btn-save" id="tour-next">${t("tour.next")}</button>
-                    </div>
-                </div>`;
-                ov.querySelector("#tour-lang-ru")?.addEventListener("click", () => {
-                    if (window.I18N) I18N.set("ru");
-                    const ls = document.getElementById("set-lang");
-                    if (ls) ls.value = "ru";
-                    render();
-                });
-                ov.querySelector("#tour-lang-en")?.addEventListener("click", () => {
-                    if (window.I18N) I18N.set("en");
-                    const ls = document.getElementById("set-lang");
-                    if (ls) ls.value = "en";
-                    render();
-                });
-            } else {
-                ov.innerHTML = `<div class="tour-box">
-                    <div class="tour-ico"><i class="fa-solid ${s.icon}"></i></div>
-                    <div class="tour-title">${s.title}</div>
-                    <div class="tour-text">${s.text}</div>
-                    <div class="tour-dots">${steps.map((_, k) => `<span class="${k === i ? "on" : ""}"></span>`).join("")}</div>
-                    <div class="tour-actions">
-                        <button class="btn-token" id="tour-skip">${t("tour.skip")}</button>
-                        <div style="flex:1;"></div>
-                        ${i > 0 ? `<button class="btn-token" id="tour-prev">${t("tour.back")}</button>` : ""}
-                        <button class="btn-save" id="tour-next">${i === steps.length - 1 ? t("tour.done") : t("tour.next")}</button>
-                    </div>
-                </div>`;
-                const prev = ov.querySelector("#tour-prev");
-                if (prev) prev.addEventListener("click", () => { i--; render(); });
-            }
-            ov.querySelector("#tour-skip").addEventListener("click", done);
-            ov.querySelector("#tour-next").addEventListener("click", () => {
-                if (i === steps.length - 1) done();
-                else { i++; render(); }
-            });
-        };
-        const done = () => { localStorage.setItem("lzt_tour_done", "1"); ov.remove(); };
-        ov.addEventListener("click", (e) => { if (e.target === ov) done(); });
-        document.body.appendChild(ov);
-        render();
+        if (!window.LZTTour) return;
+        this.newScenario();
+        this.commit();
+        if (window.LZTFeatures?.syncActiveTab) window.LZTFeatures.syncActiveTab();
+        window.LZTTour.start();
     },
 
 
@@ -209,15 +133,26 @@ const Scenario = {
         this.seq = 1;
         this.title = this.defaultTitle();
         this.currentId = null;
+        this._scenarioIsDemo = false;
         this.selectedNode = null;
         this.scale = 1; this.panX = 40; this.panY = 20;
         this.addNode("start", 60, 240);
         this.applyTransform();
         this.render();
         this.updateTitle();
+        this.updateRunHint();
         this.regenScript();
         this.autosave();
         this.resetHistory();
+    },
+
+    updateRunHint() {
+        const hint = document.querySelector(".run-action-hint");
+        if (!hint) return;
+        const tr = (k, fb) => (window.I18N && I18N.t(k)) || fb;
+        hint.textContent = this._scenarioIsDemo
+            ? tr("run.demoRunHint", "Mock-данные · токен не нужен")
+            : tr("run.liveHint", "С вашим API-токеном");
     },
 
     updateTitle() {
@@ -267,6 +202,7 @@ const Scenario = {
         if (type === "foreach") return { foreach: { source: "last.items", itemVar: "item", indexVar: "i" } };
         if (type === "checker") return { checker: { itemPath: "last.items.0.item_id", rejectSold: true } };
         if (type === "sniper") return { sniper: { source: "last.items", maxPrice: "100", maxSpend: "5000", priceField: "price", itemField: "item_id" } };
+        if (type === "ai") return { ai: { batch: true, batchLimit: 50, source: "vars.filtered", outputVar: "ai_result", prompt: "Оцени лоты. Верни JSON {\"items\":[{\"item_id\":N,\"buy\":true,\"score\":8,\"reason\":\"...\"}]}", preset: "steam_batch" } };
         if (type === "subscenario") return { subscenario: { templateId: "" } };
         return {};
     },
@@ -281,13 +217,27 @@ const Scenario = {
     addBlockAtCenter(type) {
         const r = this.viewport.getBoundingClientRect();
         const c = this.screenToWorld(r.left + r.width / 2, r.top + r.height / 2);
-        // небольшой разброс, чтобы блоки не ложились друг на друга
         const offset = (this.nodes.length % 5) * 26;
-        const node = this.addNode(type, Math.round(c.x - 120 + offset), Math.round(c.y - 40 + offset));
+        const wasOnlyStart = this.nodes.length <= 1;
+        const inTour = !!document.getElementById("tour-spotlight-root");
+        const start = this.nodes.find(n => n.type === "start");
+        let x = Math.round(c.x - 120 + offset);
+        let y = Math.round(c.y - 40 + offset);
+        if (inTour && type === "request" && start) {
+            x = start.x + 300;
+            y = start.y - 20;
+        }
+        const node = this.addNode(type, x, y);
         this.render();
         this.regenScript();
         this.commit();
-        if (type === "request") this.openPropEditor(node, r.left + r.width / 2, r.top + r.height / 2);
+        if (type === "request" && !document.getElementById("tour-spotlight-root")) {
+            this.openPropEditor(node, r.left + r.width / 2, r.top + r.height / 2);
+        }
+        if (wasOnlyStart && type !== "start") {
+            const msg = (window.I18N && I18N.t("canvas.connectHint")) || "Потяните линию от «Старт» к новому блоку";
+            this.flash?.(msg, "ok");
+        }
         return node;
     },
 
@@ -317,15 +267,7 @@ const Scenario = {
         return true;
     },
 
-    async addRequestFromTemplate(tpl) {
-        if (this.hasMeaningfulWork()) {
-            const ok = await LZTDialog.confirm(
-                "Заменить текущий сценарий этим запросом?\nНесохранённые изменения будут потеряны.\n\nЧтобы добавить ещё один запрос — используйте «Добавить блок».",
-                { title: "Заменить сценарий?", okText: "Заменить", cancelText: "Отмена", icon: "fa-arrow-right-arrow-left", danger: true }
-            );
-            if (!ok) return;
-        }
-
+    addRequestFromTemplate(tpl) {
         const req = {
             method: tpl.method || "GET",
             url: tpl.url || "",
@@ -340,7 +282,7 @@ const Scenario = {
         };
 
         const title = tpl.title || "Запрос";
-        this.load({
+        const data = {
             title,
             nodes: [
                 { id: "n1", type: "start", x: 60, y: 220 },
@@ -349,25 +291,40 @@ const Scenario = {
             edges: [
                 { id: "e1", from: "n1", fromPort: "out", to: "n2" },
             ],
-            view: { scale: 1, panX: 40, panY: 20 }
-        });
+            view: { scale: 1, panX: 40, panY: 20 },
+        };
+
+        if (this.hasMeaningfulWork() && window.LZTFeatures?.openScenarioInNewTab) {
+            window.LZTFeatures.openScenarioInNewTab(data);
+            this.flash("Загружен: " + title, "ok");
+            return;
+        }
+
+        this.load(data);
         this.commit();
         this.flash("Загружен: " + title, "ok");
     },
 
-    async openScenario(data, opts) {
+    openScenario(data, opts) {
         opts = opts || {};
         if (!data) return;
-        if (!opts.force && this.hasMeaningfulWork()) {
-            const ok = await LZTDialog.confirm(
-                "Заменить текущий сценарий?\nНесохранённые изменения будут потеряны.",
-                { title: "Заменить сценарий?", okText: "Заменить", cancelText: "Отмена", icon: "fa-arrow-right-arrow-left", danger: true }
-            );
-            if (!ok) return;
+        if (!opts.force && this.hasMeaningfulWork() && window.LZTFeatures?.openScenarioInNewTab) {
+            window.LZTFeatures.openScenarioInNewTab(data, opts);
+            if (opts.flash !== false) this.flash("Загружен: " + (data.title || "Сценарий"), "ok");
+            return;
         }
-        this.load(data, { keepView: !!opts.keepView });
+        this._scenarioIsDemo = !!(opts.demo || data.isDemo || data._demo);
+        this.load(data, { keepView: !!opts.keepView, demo: this._scenarioIsDemo });
         this.commit();
         if (opts.flash !== false) this.flash("Загружен: " + (data.title || "Сценарий"), "ok");
+    },
+
+    openDemoExample() {
+        const ex = this.examples().find(e => e.id === "demo");
+        if (!ex) return;
+        document.querySelector('#scenario-examples-list .tpl-row[data-tour-id="demo"]')
+            ?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+        return this.openScenario(ex.build(), { demo: true });
     },
 
     deleteNode(id) {
@@ -425,11 +382,17 @@ const Scenario = {
 
     // ==================== ТРАНСФОРМАЦИЯ / КООРДИНАТЫ ====================
 
-    applyTransform() {
-        this.world.style.transform = `translate(${this.panX}px, ${this.panY}px) scale(${this.scale})`;
+    applyTransform(opts) {
+        opts = opts || {};
+        this.world.style.transform = `translate3d(${this.panX}px, ${this.panY}px, 0) scale(${this.scale})`;
         const zr = document.getElementById("zoom-reset");
         if (zr) zr.textContent = Math.round(this.scale * 100) + "%";
-        this.drawMinimap();
+        if (opts.skipMinimap) return;
+        if (this._minimapRaf) cancelAnimationFrame(this._minimapRaf);
+        this._minimapRaf = requestAnimationFrame(() => {
+            this._minimapRaf = 0;
+            this.drawMinimap();
+        });
     },
 
 
@@ -506,6 +469,37 @@ const Scenario = {
         });
     },
 
+    exportRunLog() {
+        const logEl = document.getElementById("run-log");
+        const debugEl = document.getElementById("run-debug");
+        const logText = logEl?.innerText?.trim() || "";
+        const debugText = debugEl?.innerText?.trim() || "";
+        if (!logText && !debugText) {
+            this.flash?.("Лог пуст — сначала запустите сценарий", "err");
+            return;
+        }
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const safeTitle = (this.title || "scenario").replace(/[^\w\u0400-\u04FF-]+/g, "_").slice(0, 40);
+        const body = [
+            `# LZT API Constructor — лог прогона`,
+            `# Сценарий: ${this.title || "—"}`,
+            `# ${new Date().toLocaleString()}`,
+            "",
+            "=== Ход выполнения ===",
+            logText,
+            "",
+            "=== Debug / API ===",
+            debugText,
+        ].join("\n");
+        const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `${safeTitle}_run_${stamp}.txt`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        this.flash?.("Лог сохранён", "ok");
+    },
+
     // Центрировать вид на блоке (используется поиском и пошаговым режимом)
     centerOn(id) {
         const n = this.getNode(id);
@@ -579,7 +573,8 @@ const Scenario = {
 
     drawMinimap() {
         const cv = document.getElementById("minimap-canvas");
-        if (!cv || !this.nodes.length) return;
+        const mini = document.getElementById("canvas-minimap");
+        if (!cv || !this.nodes.length || !mini || mini.style.display === "none") return;
         const ctx = cv.getContext("2d");
         const W = cv.width, H = cv.height;
         ctx.clearRect(0, 0, W, H);
@@ -632,7 +627,7 @@ const Scenario = {
     // ==================== СОХРАНЕНИЕ / ПРИМЕРЫ ====================
 
     serialize() {
-        return { id: this.currentId, title: this.title, seq: this.seq, view: { scale: this.scale, panX: this.panX, panY: this.panY }, nodes: JSON.parse(JSON.stringify(this.nodes)), edges: JSON.parse(JSON.stringify(this.edges)) };
+        return { id: this.currentId, title: this.title, seq: this.seq, isDemo: !!this._scenarioIsDemo, view: { scale: this.scale, panX: this.panX, panY: this.panY }, nodes: JSON.parse(JSON.stringify(this.nodes)), edges: JSON.parse(JSON.stringify(this.edges)) };
     },
 
     // ==================== ЭКСПОРТ / ИМПОРТ В ФАЙЛ ====================
@@ -748,6 +743,7 @@ const Scenario = {
         }
         this.title = data.title || "Сценарий";
         this.currentId = data.id || null;
+        this._scenarioIsDemo = !!(opts.demo || data.isDemo || data._demo);
         this.seq = data.seq || (this.nodes.length + this.edges.length + 5);
         // корректный seq, чтобы не было коллизий id
         let maxN = 0;
@@ -758,6 +754,7 @@ const Scenario = {
         this.applyTransform();
         this.render();
         this.updateTitle();
+        this.updateRunHint();
         this.regenScript();
         if (!opts.keepView) setTimeout(() => this.fitView(), 60);
         // Автосейв всегда, а историю сбрасываем только при обычной загрузке (не при undo/redo)
@@ -810,7 +807,15 @@ const Scenario = {
         const list = this.savedList();
         container.innerHTML = "";
         if (!list.length) {
-            container.innerHTML = `<span style="font-size: 12px; color: var(--text-muted); padding: 4px 8px;">Пока нет сохранённых сценариев. Нажмите <i class="fa-solid fa-floppy-disk"></i> в панели инструментов холста.</span>`;
+            const t = (k, fb) => (window.I18N && I18N.t(k)) || fb;
+            container.innerHTML = `<div class="saved-empty-state">
+                <span>${t("saved.empty", "Пока нет сохранённых сценариев.")}</span>
+                <small>${t("saved.emptyHint", "")}</small>
+                <button type="button" class="btn-token saved-try-demo"><i class="fa-solid fa-flask"></i> ${t("saved.tryDemo", "Попробовать демо")}</button>
+            </div>`;
+            container.querySelector(".saved-try-demo")?.addEventListener("click", () => {
+                this.openDemoExample();
+            });
             return;
         }
         list.forEach((sc, index) => {
@@ -824,6 +829,9 @@ const Scenario = {
             div.addEventListener("click", () => this.openScenario(sc));
             div.querySelector(".fa-trash").addEventListener("click", async (e) => {
                 e.stopPropagation();
+                const t = (k, fb) => (window.I18N && I18N.t(k)) || fb;
+                const msg = t("saved.deleteConfirm", "Удалить сценарий?").replace("{title}", sc.title || "");
+                if (window.LZTDialog && !await LZTDialog.confirm(msg, { title: t("sidebar.myScenarios", "Мои сценарии"), okText: "Удалить", danger: true })) return;
                 const l = this.savedList(); l.splice(index, 1);
                 await this.persistSavedList(l);
                 this.renderSaved();
@@ -839,6 +847,7 @@ const Scenario = {
         this.examples().forEach(ex => {
             const div = document.createElement("div");
             div.className = "tpl-row";
+            if (ex.id) div.dataset.tourId = ex.id;
             div.innerHTML = `<div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
                     <span class="icon" style="color: var(--lzt-green);"><i class="${ex.icon || "fa-solid fa-diagram-project"}"></i></span>
                     <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${this.esc(ex.title)}</span>
@@ -847,7 +856,7 @@ const Scenario = {
             div.addEventListener("click", async () => {
                 document.querySelectorAll(".tpl-row").forEach(el => el.classList.remove("active"));
                 div.classList.add("active");
-                await this.openScenario(ex.build());
+                await this.openScenario(ex.build(), { demo: ex.id === "demo" });
             });
             container.appendChild(div);
         });
@@ -855,6 +864,16 @@ const Scenario = {
 
     examples() {
         return [
+            {
+                id: "demo", title: "Демо: поиск → снайпер", icon: "fa-solid fa-flask",
+                desc: "Готовый сценарий с mock API — без токена",
+                build: () => (window.LZTDemo ? window.LZTDemo.buildDemoScenario() : { title: "Демо", nodes: [{ id: "n1", type: "start", x: 40, y: 220 }], edges: [] }),
+            },
+            {
+                title: "Умный снайпер (ИИ)", icon: "fa-solid fa-brain",
+                desc: "Поиск → фильтр → ИИ-оценка → снайпер",
+                build: () => (window.LZTDemo ? window.LZTDemo.buildSmartSniperScenario() : { title: "Умный снайпер", nodes: [{ id: "n1", type: "start", x: 40, y: 220 }], edges: [] }),
+            },
             {
                 title: "Поиск дешёвых Steam-аккаунтов", icon: "fa-brands fa-steam",
                 desc: "Ищет аккаунты Steam и проверяет, есть ли результаты",

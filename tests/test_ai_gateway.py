@@ -8,7 +8,7 @@ from backend import ai_gateway
 
 
 def test_fingerprint_accepts_lztconstruct():
-    ok, _ = ai_gateway.validate_fingerprint("LZTConstruct/1.0.0")
+    ok, _ = ai_gateway.validate_fingerprint("LZTConstruct/1.3.0")
     assert ok is True
 
 
@@ -48,7 +48,7 @@ def test_resolve_client_ip_from_forwarded():
 
 def test_rate_limit_in_memory():
     ai_gateway._rate_buckets.clear()
-    ip, fp = "127.0.0.1", "LZTConstruct/1.0.0"
+    ip, fp = "127.0.0.1", "LZTConstruct/1.3.0"
     limit = ai_gateway.FREE_LIMIT_PER_HOUR
     for i in range(limit):
         ok, rem, _ = ai_gateway.rate_limit_status(ip, fp)

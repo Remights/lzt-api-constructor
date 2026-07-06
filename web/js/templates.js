@@ -84,11 +84,22 @@ const PARAM_DATA = {
     "secret_answer": { desc: "Секретный ответ от маркета для подтверждения перевода/операции", cat: "forum" },
     "transfer_title": { desc: "Название или примечание денежного перевода", cat: "forum" },
     "hold_time": { desc: "Время холда (удержания) перевода в часах", cat: "forum" },
-    "recipient_id": { desc: "ID получателя перевода средств", cat: "forum" }
+    "recipient_id": { desc: "ID получателя перевода средств", cat: "forum" },
+    "thread_title": { desc: "Заголовок создаваемой темы на форуме", cat: "forum" },
+    "creator_user_id": { desc: "ID автора тем (фильтр списка тем)", cat: "forum" },
+    "prefix_ids[]": { desc: "ID префиксов тем (теги в заголовке)", cat: "forum" },
+    "thread_tag_id": { desc: "ID тега темы", cat: "forum" },
+    "order": { desc: "Поле сортировки (thread_create_date, thread_update_date…)", cat: "forum" },
+    "direction": { desc: "Направление сортировки (asc / desc)", cat: "forum" },
+    "fields_include": { desc: "Доп. поля в ответе (через запятую)", cat: "forum" },
+    "sticky": { desc: "Только закреплённые темы (1 = да)", cat: "forum" },
+    "state": { desc: "Состояние тем (visible, deleted…)", cat: "forum" },
+    "period": { desc: "Период выборки (day, week, month…)", cat: "forum" },
+    "title_only": { desc: "Искать только в заголовках тем (1 = да)", cat: "forum" }
 };
 
 /** ID пользователя в примерах шаблонов (форум, thread/post). */
-const LZT_MY_ID = 1;
+const LZT_MY_ID = 3450027;
 
 const FULL_API_DATABASE = [
     // --- МАРКЕТ: ПОИСК АККАУНТОВ ---

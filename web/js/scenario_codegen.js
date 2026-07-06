@@ -7,10 +7,8 @@
     Object.assign(window.Scenario, {
     // ==================== ГЕНЕРАЦИЯ СКРИПТА-БОТА ====================
 
-    regenScript() {
-        const out = document.getElementById("script-output");
-        if (!out) return;
-        const gen = {
+    scriptGenerators() {
+        return {
             python: () => this.generatePython(),
             python_async: () => this.generatePythonAsync(),
             node: () => this.generateNode(),
@@ -18,8 +16,69 @@
             php: () => this.generatePHP(),
             csharp: () => this.generateCSharp(),
             go: () => this.generateGo(),
-        }[this.scriptLang] || (() => this.generatePython());
-        out.textContent = gen();
+        };
+    },
+
+    generateScriptForLang(lang) {
+        lang = lang || this.scriptLang || "python";
+        const gen = this.scriptGenerators()[lang];
+        return (gen || this.generatePython.bind(this))();
+    },
+
+    regenScript() {
+        const out = document.getElementById("script-output");
+        if (!out) return;
+        out.textContent = this.generateScriptForLang(this.scriptLang);
+        if (typeof window.rebuildShareMenu === "function") window.rebuildShareMenu();
+    },
+
+    zipLangMeta(lang) {
+        lang = lang || this.scriptLang || "python";
+        const meta = {
+            python: { main: "bot.py", deps: "requirements.txt", flashRu: "Python-проект сохранён (.zip)", flashEn: "Python project saved (.zip)" },
+            python_async: { main: "bot.py", deps: "requirements.txt", flashRu: "Python async-проект сохранён (.zip)", flashEn: "Python async project saved (.zip)" },
+            node: { main: "bot.js", deps: "package.json", flashRu: "Node.js-проект сохранён (.zip)", flashEn: "Node.js project saved (.zip)" },
+            bash: { main: "bot.sh", deps: null, flashRu: "Bash-скрипт сохранён (.zip)", flashEn: "Bash script saved (.zip)" },
+            php: { main: "bot.php", deps: null, flashRu: "PHP-проект сохранён (.zip)", flashEn: "PHP project saved (.zip)" },
+            csharp: { main: "Program.cs", deps: "Scenario.csproj", flashRu: "C#-проект сохранён (.zip)", flashEn: "C# project saved (.zip)" },
+            go: { main: "main.go", deps: "go.mod", flashRu: "Go-проект сохранён (.zip)", flashEn: "Go project saved (.zip)" },
+        };
+        return meta[lang] || meta.python;
+    },
+
+    buildProjectZipFiles(lang) {
+        lang = lang || this.scriptLang || "python";
+        const scnData = this.serialize();
+        const code = this.generateScriptForLang(lang);
+        const meta = this.zipLangMeta(lang);
+        const files = [{ name: meta.main, content: code }];
+
+        if (lang === "python" || lang === "python_async") {
+            const reqs = lang === "python_async"
+                ? "aiohttp>=3.9.0\n"
+                : (this.buildProjectRequirements ? this.buildProjectRequirements(scnData) : "requests>=2.31.0\n");
+            files.push({ name: "requirements.txt", content: reqs });
+        } else if (lang === "node") {
+            files.push({
+                name: "package.json",
+                content: JSON.stringify({ name: "lzt-bot", private: true, type: "commonjs", dependencies: { axios: "^1.6.0" } }, null, 2) + "\n",
+            });
+        } else if (lang === "csharp") {
+            files.push({
+                name: "Scenario.csproj",
+                content: `<Project Sdk="Microsoft.NET.Sdk">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net8.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <Nullable>enable</Nullable>\n    <RootNamespace>LztBot</RootNamespace>\n  </PropertyGroup>\n</Project>\n`,
+            });
+        } else if (lang === "go") {
+            const slug = (this.slugify ? this.slugify(this.title) : "lzt-bot").replace(/-/g, "") || "lztbot";
+            files.push({ name: "go.mod", content: `module ${slug}\n\ngo 1.21\n` });
+        }
+
+        files.push({
+            name: "README.md",
+            content: this.buildProjectReadme(this.title, scnData, lang),
+        });
+        files.push({ name: "scenario.json", content: JSON.stringify(scnData, null, 2) });
+        return files;
     },
 
     // Упорядоченный список исполняемых нод (без «Старт») и стартовая нода
@@ -264,6 +323,36 @@
         if (f.op === "!=") return `String(x[${field}]) !== ${val}`;
         const cmp = { ">": ">", "<": "<", ">=": ">=", "<=": "<=" }[f.op] || "==";
         return `parseFloat(x[${field}]) ${cmp} parseFloat(${val})`;
+    },
+
+    csFilterExpr(f) {
+        const field = this.py(f.field);
+        const val = this.py(f.value);
+        if (f.op === "exists") return `x.TryGetProperty(${field}, out _fv)`;
+        if (f.op === "==") return `x.TryGetProperty(${field}, out _fv) && _fv.ToString() == ${val}`;
+        if (f.op === "!=") return `x.TryGetProperty(${field}, out _fv) && _fv.ToString() != ${val}`;
+        const cmp = { ">": ">", "<": "<", ">=": ">=", "<=": "<=" }[f.op] || "==";
+        return `x.TryGetProperty(${field}, out _fv) && double.TryParse(_fv.ToString(), out _fn) && _fn ${cmp} double.Parse(${val})`;
+    },
+
+    goFilterExpr(f) {
+        const field = this.py(f.field);
+        const val = this.py(f.value);
+        if (f.op === "exists") return `_, ok := x[${field}]; ok`;
+        if (f.op === "==") return `fmt.Sprint(x[${field}]) == ${val}`;
+        if (f.op === "!=") return `fmt.Sprint(x[${field}]) != ${val}`;
+        const cmp = { ">": ">", "<": "<", ">=": ">=", "<=": "<=" }[f.op] || "==";
+        return `toFloat(x[${field}]) ${cmp} toFloat(${val})`;
+    },
+
+    bashFilterJq(f) {
+        const field = f.field.replace(/"/g, '\\"');
+        const val = String(f.value).replace(/"/g, '\\"');
+        if (f.op === "exists") return `has("${field}")`;
+        if (f.op === "==") return `(.${field} | tostring) == "${val}"`;
+        if (f.op === "!=") return `(.${field} | tostring) != "${val}"`;
+        const cmp = { ">": ">", "<": "<", ">=": ">=", "<=": "<=" }[f.op] || "==";
+        return `((.${field} | tonumber?) // 0) ${cmp} ${parseFloat(val) || 0}`;
     },
 
     pyComment(s) { return String(s).replace(/[\r\n]+/g, " ").slice(0, 80); },
@@ -573,91 +662,191 @@
         return L.join("\n");
     },
 
-    // ---------- Bash (curl) ----------
-    // Линейный проход: условия/ветвления в чистом bash громоздки, поэтому
-    // генерируем последовательную цепочку по «успешному» пути с пометками.
+    // ---------- Bash (curl + jq) ----------
     generateBash() {
         const { startTarget } = this.flow();
         const L = [];
         L.push("#!/usr/bin/env bash");
-        L.push("# Сценарий LZT API. Для сложных ветвлений используйте Python/Node — bash показывает основной путь.");
+        L.push("set -euo pipefail");
+        L.push("# Сценарий LZT API — требуется jq (https://jqlang.github.io/jq/)");
+        L.push('if ! command -v jq >/dev/null 2>&1; then echo "Установите jq для работы скрипта"; exit 1; fi');
         L.push('TOKEN="ВСТАВЬТЕ_ВАШ_ТОКЕН"');
         L.push('AUTH="Authorization: Bearer $TOKEN"');
+        L.push('LAST_JSON="null"');
+        L.push("declare -A VARS COUNTERS PROXY_STATE");
+        L.push('CURRENT_PROXY=""');
         L.push("");
-        const visited = new Set();
-        let cur = startTarget;
-        let idx = 0;
-        while (cur && !visited.has(cur) && idx < 100) {
-            visited.add(cur); idx++;
-            const node = this.getNode(cur);
-            if (!node) break;
+        L.push("path_to_jq() {");
+        L.push('  local p="$1" sub=""');
+        L.push('  if [[ "$p" == vars.* ]]; then echo "vars:${p#vars.}"; return; fi');
+        L.push('  if [[ "$p" == last.* ]]; then sub="${p#last.}"; elif [[ "$p" == "last" ]]; then echo "."; return; else sub="$p"; fi');
+        L.push('  local jq="." part');
+        L.push('  IFS="." read -ra PARTS <<< "$sub"');
+        L.push('  for part in "${PARTS[@]}"; do');
+        L.push('    [[ -z "$part" ]] && continue');
+        L.push('    if [[ "$part" == "length" ]]; then jq+="| length"');
+        L.push('    elif [[ "$part" =~ ^[0-9]+$ ]]; then jq+="[$part]"');
+        L.push('    else jq+=".$part"');
+        L.push("    fi");
+        L.push("  done");
+        L.push('  echo "$jq"');
+        L.push("}");
+        L.push("");
+        L.push("get_path() {");
+        L.push('  local path="$1"');
+        L.push('  if [[ "$path" == vars.* ]]; then echo "${VARS[${path#vars.}]:-}"; return; fi');
+        L.push('  local jq_expr; jq_expr=$(path_to_jq "$path")');
+        L.push('  if [[ "$jq_expr" == vars:* ]]; then echo "${VARS[${jq_expr#vars:}]:-}"; return; fi');
+        L.push('  echo "$LAST_JSON" | jq -c "$jq_expr // empty" 2>/dev/null || true');
+        L.push("}");
+        L.push("");
+        L.push("resolve() {");
+        L.push('  local s="$1" key val');
+        L.push('  while [[ "$s" == *"{{"* ]]; do');
+        L.push('    key=$(echo "$s" | sed -n "s/.*{{\\s*\\([^}]*\\)\\s*}}.*/\\1/p" | head -1 | xargs)');
+        L.push('    [[ -z "$key" ]] && break');
+        L.push('    val=$(get_path "$key")');
+        L.push('    s="${s//\\{\\{${key}\\}\\}/$val}"');
+        L.push("  done");
+        L.push('  echo "$s"');
+        L.push("}");
+        L.push("");
+        L.push("do_request() {");
+        L.push('  local method="$1" url="$2"');
+        L.push('  local -a curl_args=(-s -w "\\n%{http_code}" -X "$method" -H "$AUTH")');
+        L.push('  [[ -n "$CURRENT_PROXY" ]] && curl_args+=(-x "$CURRENT_PROXY")');
+        L.push('  local resp code body');
+        L.push('  resp=$(curl "${curl_args[@]}" "$url")');
+        L.push('  code=$(echo "$resp" | tail -n1)');
+        L.push('  body=$(echo "$resp" | sed \'$d\')');
+        L.push('  LAST_JSON="${body:-null}"');
+        L.push('  echo "$code"');
+        L.push("}");
+        L.push("");
+        L.push("notify_send() {");
+        L.push('  local channel="$1" text="$2" tg_token="$3" tg_chat="$4" discord_url="$5"');
+        L.push('  if [[ "$channel" == "telegram" || "$channel" == "both" ]] && [[ -n "$tg_token" && -n "$tg_chat" ]]; then');
+        L.push('    curl -s -X POST "https://api.telegram.org/bot${tg_token}/sendMessage" -d "chat_id=${tg_chat}" --data-urlencode "text=${text}" >/dev/null || true');
+        L.push("  fi");
+        L.push('  if [[ "$channel" == "discord" || "$channel" == "both" ]] && [[ -n "$discord_url" ]]; then');
+        L.push('    curl -s -X POST "$discord_url" -H "Content-Type: application/json" -d "$(jq -n --arg c "$text" \'{content:$c}\')" >/dev/null || true');
+        L.push("  fi");
+        L.push("}");
+        L.push("");
+        L.push(`node=${startTarget ? this.py(startTarget) : '""'}`);
+        L.push("steps=0");
+        L.push('while [[ -n "$node" && $steps -lt 300 ]]; do');
+        L.push("  steps=$((steps+1))");
+        L.push('  case "$node" in');
+        this.nodes.forEach(node => {
+            if (node.type === "start") return;
+            L.push(`    ${this.py(node.id)})`);
             if (node.type === "request") {
                 const req = node.request || {};
-                const qs = Object.entries(req.params || {}).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(Array.isArray(v) ? v.join(",") : v)}`).join("&");
-                const url = req.url + (qs ? (req.url.includes("?") ? "&" : "?") + qs : "");
-                L.push(`# ${this.pyComment(req.title || "Запрос")}`);
-                let line = `curl -s -X ${req.method} "${url}" -H "$AUTH"`;
-                if (req.body && Object.keys(req.body).length) {
-                    const bodyStr = Object.entries(req.body).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
-                    line += ` --data "${bodyStr}"`;
+                const succ = this.edgeTarget(node.id, "success");
+                const paramEntries = Object.entries(req.params || {});
+                L.push(`      # ${this.pyComment(req.title || "Запрос")}`);
+                L.push(`      _url=$(resolve ${this.py(req.url || "https://prod-api.lzt.market/")})`);
+                if (paramEntries.length) {
+                    const qs = paramEntries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(Array.isArray(v) ? v.join(",") : String(v))}`).join("&");
+                    L.push(`      [[ "$_url" == *\\?* ]] && _url+="&${qs.replace(/"/g, '\\"')}" || _url+="?${qs.replace(/"/g, '\\"')}"`);
                 }
-                L.push(line);
-                L.push("");
-                cur = this.edgeTarget(node.id, "success");
+                if (req.body && Object.keys(req.body).length) {
+                    const bodyStr = Object.entries(req.body).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join("&");
+                    L.push('      _px=""; [[ -n "$CURRENT_PROXY" ]] && _px="-x $CURRENT_PROXY"');
+                    L.push(`      _code=$(curl -s -o /tmp/lzt_body -w "%{http_code}" -X ${req.method || "GET"} -H "$AUTH" $_px --data "${bodyStr.replace(/"/g, '\\"')}" "$_url")`);
+                    L.push('      LAST_JSON=$(cat /tmp/lzt_body 2>/dev/null || echo "null")');
+                } else {
+                    L.push(`      _code=$(do_request ${this.py(req.method || "GET")} "$_url")`);
+                }
+                L.push(`      echo "[${req.method || "GET"}] $_url -> $_code"`);
+                L.push(`      if [[ "$_code" -lt 400 ]]; then node=${succ ? this.py(succ) : '""'}; else node=${this._errNextGo(node.id, "error")}; fi`);
             } else if (node.type === "condition") {
-                L.push(`# УСЛОВИЕ: ${node.condition.left} ${node.condition.op} ${node.condition.right} — проверьте вручную (ветка «Да»)`);
-                L.push("");
-                cur = this.edgeTarget(node.id, "true");
+                const c = node.condition;
+                const t = this.edgeTarget(node.id, "true");
+                const f = this.edgeTarget(node.id, "false");
+                L.push(`      _l=$(get_path ${this.py(c.left)})`);
+                if (c.op === "exists") {
+                    L.push('      if [[ -n "$_l" && "$_l" != "null" ]]; then _ok=1; else _ok=0; fi');
+                } else if (c.op === "==" || c.op === "!=") {
+                    L.push(`      if [[ "$_l" ${c.op === "==" ? "==" : "!="} $(resolve ${this.py(c.right)}) ]]; then _ok=1; else _ok=0; fi`);
+                } else {
+                    L.push(`      if awk -v a="$_l" -v b="$(resolve ${this.py(c.right)})" 'BEGIN{exit !(a+0 ${c.op} b+0)}'; then _ok=1; else _ok=0; fi`);
+                }
+                L.push(`      if [[ $_ok -eq 1 ]]; then node=${t ? this.py(t) : '""'}; else node=${f ? this.py(f) : '""'}; fi`);
             } else if (node.type === "loop") {
-                L.push(`# ЦИКЛ ×${node.loop.times}: в bash оформите как 'for i in $(seq 1 ${node.loop.times}); do ... done' вокруг блоков тела`);
-                L.push("");
-                cur = this.edgeTarget(node.id, "body") || this.edgeTarget(node.id, "done");
+                const b = this.edgeTarget(node.id, "body");
+                const d = this.edgeTarget(node.id, "done");
+                L.push(`      COUNTERS[${this.py(node.id)}]=${"${COUNTERS[" + this.py(node.id) + "]:-0}"}`);
+                L.push(`      if [[ ${"${COUNTERS[" + this.py(node.id) + "]}"} -lt ${node.loop.times} ]]; then`);
+                L.push(`        COUNTERS[${this.py(node.id)}]=$((COUNTERS[${this.py(node.id)}]+1))`);
+                L.push(`        node=${b ? this.py(b) : '""'}`);
+                L.push("      else");
+                L.push(`        COUNTERS[${this.py(node.id)}]=0`);
+                L.push(`        node=${d ? this.py(d) : '""'}`);
+                L.push("      fi");
             } else if (node.type === "variable") {
-                L.push(`# ПЕРЕМЕННАЯ ${node.variable.name} = ${node.variable.path} (извлеките через jq из ответа)`);
-                L.push("");
-                cur = this.edgeTarget(node.id, "out");
-            } else if (node.type === "logmsg") {
-                L.push(`echo ${this.py(node.logmsg.text)}`);
-                L.push("");
-                cur = this.edgeTarget(node.id, "out");
-            } else if (node.type === "savefile") {
-                L.push(`# СОХРАНЕНИЕ: выгрузите ${node.savefile.source} в ${node.savefile.filename}.${node.savefile.format} (например через jq)`);
-                L.push("");
-                cur = this.edgeTarget(node.id, "out");
+                const nx = this.edgeTarget(node.id, "out");
+                L.push(`      VARS[${this.py(node.variable.name)}]=$(get_path ${this.py(node.variable.path)})`);
+                L.push(`      node=${nx ? this.py(nx) : '""'}`);
+            } else if (node.type === "filter") {
+                const f = node.filter;
+                const found = this.edgeTarget(node.id, "found");
+                const empty = this.edgeTarget(node.id, "empty");
+                L.push(`      _arr=$(get_path ${this.py(f.source)})`);
+                L.push(`      _res=$(echo "$_arr" | jq -c '[.[] | select(${this.bashFilterJq(f)})]' 2>/dev/null || echo '[]')`);
+                L.push(`      VARS[${this.py(f.saveAs)}]="$_res"`);
+                L.push('      LAST_JSON="$_res"');
+                L.push(`      _cnt=$(echo "$_res" | jq 'length')`);
+                L.push(`      if [[ "$_cnt" -gt 0 ]]; then node=${found ? this.py(found) : '""'}; else node=${empty ? this.py(empty) : '""'}; fi`);
             } else if (node.type === "notify") {
                 const n = node.notify;
-                if (n.channel === "telegram" || n.channel === "both") L.push(`curl -s -X POST "https://api.telegram.org/bot${n.tgToken}/sendMessage" -d chat_id=${n.tgChat} --data-urlencode text=${this.py(n.text)} > /dev/null`);
-                if (n.channel === "discord" || n.channel === "both") L.push(`curl -s -X POST ${this.py(n.discordUrl)} -H "Content-Type: application/json" -d '{"content": ${JSON.stringify(n.text)}}' > /dev/null`);
-                L.push("");
-                cur = this.edgeTarget(node.id, "out");
-            } else if (node.type === "filter") {
-                L.push(`# ФИЛЬТР: оставить из ${node.filter.source}, где ${node.filter.field} ${node.filter.op} ${node.filter.value} (используйте jq)`);
-                L.push("");
-                cur = this.edgeTarget(node.id, "found") || this.edgeTarget(node.id, "empty");
+                const nx = this.edgeTarget(node.id, "out");
+                L.push(`      notify_send ${this.py(n.channel)} "$(resolve ${this.py(n.text)})" ${this.py(n.tgToken)} ${this.py(n.tgChat)} ${this.py(n.discordUrl)}`);
+                L.push(`      node=${nx ? this.py(nx) : '""'}`);
+            } else if (node.type === "logmsg") {
+                const nx = this.edgeTarget(node.id, "out");
+                L.push(`      echo "$(resolve ${this.py(node.logmsg.text)})"`);
+                L.push(`      node=${nx ? this.py(nx) : '""'}`);
+            } else if (node.type === "savefile") {
+                const s = node.savefile;
+                const nx = this.edgeTarget(node.id, "out");
+                L.push(`      _data=$(get_path ${this.py(s.source)})`);
+                if (s.format === "csv") {
+                    L.push(`      echo "$_data" | jq -r '(.[0] | keys_unsorted) as $k | $k, (.[] | [.[]] | @csv)' > ${this.py(s.filename + ".csv")} 2>/dev/null || echo "$_data" > ${this.py(s.filename + ".csv")}`);
+                } else {
+                    L.push(`      echo "$_data" | jq '.' > ${this.py(s.filename + "." + s.format)}`);
+                }
+                L.push(`      echo "Сохранён файл ${s.filename}.${s.format}"`);
+                L.push(`      node=${nx ? this.py(nx) : '""'}`);
             } else if (node.type === "proxy") {
-                L.push(`# ПРОКСИ: добавьте к curl флаг -x (напр. -x ${((node.proxy.list || "").split("\n")[0] || "host:port").trim()})`);
-                L.push("");
-                cur = this.edgeTarget(node.id, "out");
+                const nx = this.edgeTarget(node.id, "out");
+                const list = (node.proxy.list || "").split("\n").map(s => s.trim()).filter(Boolean);
+                L.push(`      _plist=(${list.map(x => this.py(x)).join(" ")})`);
+                if (node.proxy.mode === "random") {
+                    L.push('      if [[ ${#_plist[@]} -gt 0 ]]; then CURRENT_PROXY="${_plist[RANDOM % ${#_plist[@]}]}"; else CURRENT_PROXY=""; fi');
+                } else {
+                    L.push(`      _pi=${"${PROXY_STATE[" + this.py(node.id) + "]:-0}"}`);
+                    L.push('      if [[ ${#_plist[@]} -gt 0 ]]; then CURRENT_PROXY="${_plist[$((_pi % ${#_plist[@]}))]}"; else CURRENT_PROXY=""; fi');
+                    L.push(`      PROXY_STATE[${this.py(node.id)}]=$((_pi+1))`);
+                }
+                L.push(`      node=${nx ? this.py(nx) : '""'}`);
             } else if (node.type === "delay") {
-                L.push(`sleep ${(node.delay.ms || 0) / 1000}`);
-                L.push("");
-                cur = this.edgeTarget(node.id, "out");
-            } else if (node.type === "foreach") {
-                L.push(`# FOR-EACH: ${node.foreach.source} → ${node.foreach.itemVar}`);
-                cur = this.edgeTarget(node.id, "body") || this.edgeTarget(node.id, "done");
-            } else if (node.type === "checker") {
-                L.push(`# CHECKER: curl -H "Authorization: Bearer $TOKEN" "https://prod-api.lzt.market/{item_id}"`);
-                cur = this.edgeTarget(node.id, "ok") || this.edgeTarget(node.id, "fail");
-            } else if (node.type === "sniper") {
-                L.push(`# SNIPER: POST fast-buy для первого подходящего лота`);
-                cur = this.edgeTarget(node.id, "bought") || this.edgeTarget(node.id, "skip");
-            } else if (node.type === "subscenario") {
-                L.push(`# ПОД-СЦЕНАРИЙ: вставьте вызов или source scenario.json`);
-                cur = this.edgeTarget(node.id, "out");
+                const nx = this.edgeTarget(node.id, "out");
+                L.push(`      sleep ${(node.delay.ms || 0) / 1000}`);
+                L.push(`      node=${nx ? this.py(nx) : '""'}`);
+            } else if (this._cgExtNode(node, "bash", "      ", L)) {
+                /* extended */
             } else if (node.type === "stop") {
-                cur = null;
-            } else break;
-        }
+                L.push('      node=""');
+            } else {
+                L.push('      node=""');
+            }
+            L.push("      ;;");
+        });
+        L.push('    *) node="" ;;');
+        L.push("  esac");
+        L.push("done");
         L.push('echo "Сценарий завершён."');
         return L.join("\n");
     },
@@ -755,11 +944,24 @@
                 if (n.channel === "telegram" || n.channel === "both") L.push(`        @file_get_contents("https://api.telegram.org/bot${n.tgToken}/sendMessage?chat_id=${n.tgChat}&text=" . urlencode(${this.py(n.text)}));`);
                 L.push(`        $node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "filter") {
+                const f = node.filter;
                 const found = this.edgeTarget(node.id, "found");
                 const empty = this.edgeTarget(node.id, "empty");
-                L.push(`        // ФИЛЬТР: ${node.filter.source} где ${node.filter.field} ${node.filter.op} ${node.filter.value}`);
-                L.push(`        $node = ${found ? this.py(found) : "null"};`);
-                void empty;
+                L.push(`        _arr = get_path($context, ${this.py(f.source)}) ?: [];`);
+                L.push(`        _res = [];`);
+                L.push(`        foreach ((array)$_arr as $x) {`);
+                L.push(`            if (!is_array($x)) continue;`);
+                if (f.op === "exists") {
+                    L.push(`            if (isset($x[${this.py(f.field)}])) $_res[] = $x;`);
+                } else if (f.op === "==" || f.op === "!=") {
+                    L.push(`            if (strval($x[${this.py(f.field)}] ?? '') ${f.op} ${this.py(f.value)}) $_res[] = $x;`);
+                } else {
+                    L.push(`            if (floatval($x[${this.py(f.field)}] ?? 0) ${f.op} floatval(${this.py(f.value)})) $_res[] = $x;`);
+                }
+                L.push(`        }`);
+                L.push(`        $context['vars'][${this.py(f.saveAs)}] = $_res;`);
+                L.push(`        $context['last'] = $_res;`);
+                L.push(`        $node = $_res ? ${found ? this.py(found) : "null"} : ${empty ? this.py(empty) : "null"};`);
             } else if (node.type === "proxy") {
                 const nx = this.edgeTarget(node.id, "out");
                 L.push(`        // ПРОКСИ: задайте CURLOPT_PROXY для запросов`);
@@ -788,6 +990,8 @@
         const L = [];
         L.push("using System;");
         L.push("using System.Collections.Generic;");
+        L.push("using System.IO;");
+        L.push("using System.Linq;");
         L.push("using System.Net.Http;");
         L.push("using System.Text.RegularExpressions;");
         L.push("using System.Threading;");
@@ -798,27 +1002,68 @@
         L.push('    static string TOKEN = "ВСТАВЬТЕ_ВАШ_ТОКЕН";');
         L.push("    static JsonElement? last = null;");
         L.push("    static readonly Dictionary<string,int> counters = new Dictionary<string,int>();");
-        L.push("    static readonly Dictionary<string,string> vars = new Dictionary<string,string>();");
+        L.push("    static readonly Dictionary<string, JsonElement> vars = new Dictionary<string, JsonElement>();");
+        L.push("    static readonly Dictionary<string,int> proxyState = new Dictionary<string,int>();");
+        L.push('    static string currentProxy = "";');
         L.push("    static readonly HttpClient http = new HttpClient();");
         L.push("");
         L.push("    static string Resolve(string val) {");
-        L.push("        return Regex.Replace(val ?? \"\", @\"\\{\\{\\s*([^}]+)\\s*\\}\\}\", m => {");
-        L.push("            var p = m.Groups[1].Value.Trim();");
-        L.push("            if (p.StartsWith(\"vars.\")) return vars.TryGetValue(p.Substring(5), out var v) ? v : \"\";");
-        L.push("            return GetPath(p);");
-        L.push("        });");
+        L.push("        return Regex.Replace(val ?? \"\", @\"\\{\\{\\s*([^}]+)\\s*\\}\\}\", m => GetPath(m.Groups[1].Value.Trim()));");
         L.push("    }");
         L.push("    static string GetPath(string path) {");
-        L.push("        if (last == null) return \"\";");
-        L.push("        JsonElement cur = last.Value;");
-        L.push("        foreach (var p in path.Split('.')) {");
-        L.push("            var key = p.Trim(); if (key == \"\") continue;");
-        L.push("            if (key == \"length\" && cur.ValueKind == JsonValueKind.Array) return cur.GetArrayLength().ToString();");
-        L.push("            if (cur.ValueKind == JsonValueKind.Array && int.TryParse(key, out int i)) { cur = cur[i]; }");
-        L.push("            else if (cur.ValueKind == JsonValueKind.Object && cur.TryGetProperty(key, out var nx)) { cur = nx; }");
-        L.push("            else return \"\";");
+        L.push("        var el = GetPathElement(path);");
+        L.push("        return el == null ? \"\" : el.Value.ToString();");
+        L.push("    }");
+        L.push("    static JsonElement? GetPathElement(string path) {");
+        L.push("        if (path.StartsWith(\"vars.\")) {");
+        L.push("            var k = path.Substring(5);");
+        L.push("            return vars.TryGetValue(k, out var v) ? v : (JsonElement?)null;");
         L.push("        }");
-        L.push("        return cur.ToString();");
+        L.push("        var sub = path.StartsWith(\"last.\") ? path.Substring(5) : (path == \"last\" ? \"\" : path);");
+        L.push("        if (last == null) return null;");
+        L.push("        if (sub == \"\") return last;");
+        L.push("        JsonElement cur = last.Value;");
+        L.push("        foreach (var p in sub.Split('.')) {");
+        L.push("            var key = p.Trim(); if (key == \"\") continue;");
+        L.push("            if (key == \"length\" && cur.ValueKind == JsonValueKind.Array) return JsonSerializer.SerializeToElement(cur.GetArrayLength());");
+        L.push("            if (cur.ValueKind == JsonValueKind.Array && int.TryParse(key, out int i) && i < cur.GetArrayLength()) cur = cur[i];");
+        L.push("            else if (cur.ValueKind == JsonValueKind.Object && cur.TryGetProperty(key, out var nx)) cur = nx;");
+        L.push("            else return null;");
+        L.push("        }");
+        L.push("        return cur;");
+        L.push("    }");
+        L.push("    static List<JsonElement> GetPathArray(string path) {");
+        L.push("        var el = GetPathElement(path);");
+        L.push("        var res = new List<JsonElement>();");
+        L.push("        if (el == null || el.Value.ValueKind != JsonValueKind.Array) return res;");
+        L.push("        foreach (var x in el.Value.EnumerateArray()) res.Add(x);");
+        L.push("        return res;");
+        L.push("    }");
+        L.push("    static async Task NotifyAsync(string channel, string text, string tgToken, string tgChat, string discordUrl) {");
+        L.push("        try {");
+        L.push("            if ((channel == \"telegram\" || channel == \"both\") && !string.IsNullOrEmpty(tgToken) && !string.IsNullOrEmpty(tgChat))");
+        L.push("                await http.PostAsync($\"https://api.telegram.org/bot{tgToken}/sendMessage\", new StringContent(JsonSerializer.Serialize(new { chat_id = tgChat, text }), System.Text.Encoding.UTF8, \"application/json\"));");
+        L.push("            if ((channel == \"discord\" || channel == \"both\") && !string.IsNullOrEmpty(discordUrl))");
+        L.push("                await http.PostAsync(discordUrl, new StringContent(JsonSerializer.Serialize(new { content = text }), System.Text.Encoding.UTF8, \"application/json\"));");
+        L.push("        } catch { }");
+        L.push("    }");
+        L.push("    static void SaveToFile(string path, string filename, string fmt) {");
+        L.push("        var el = GetPathElement(path);");
+        L.push("        if (el == null) { Console.WriteLine(\"Нечего сохранять в \" + filename); return; }");
+        L.push("        if (fmt == \"csv\" && el.Value.ValueKind == JsonValueKind.Array) {");
+        L.push("            var lines = new List<string>(); var headers = new List<string>();");
+        L.push("            foreach (var row in el.Value.EnumerateArray()) {");
+        L.push("                if (row.ValueKind != JsonValueKind.Object) continue;");
+        L.push("                foreach (var p in row.EnumerateObject()) if (!headers.Contains(p.Name)) headers.Add(p.Name);");
+        L.push("            }");
+        L.push("            lines.Add(string.Join(\",\", headers));");
+        L.push("            foreach (var row in el.Value.EnumerateArray()) {");
+        L.push("                if (row.ValueKind != JsonValueKind.Object) continue;");
+        L.push("                lines.Add(string.Join(\",\", headers.Select(h => row.TryGetProperty(h, out var v) ? v.ToString() : \"\")));");
+        L.push("            }");
+        L.push("            File.WriteAllLines(filename, lines);");
+        L.push("        } else File.WriteAllText(filename, JsonSerializer.Serialize(el, new JsonSerializerOptions { WriteIndented = true }));");
+        L.push("        Console.WriteLine(\"Сохранён файл \" + filename);");
         L.push("    }");
         L.push("");
         L.push("    static async Task Main() {");
@@ -833,7 +1078,6 @@
             if (node.type === "request") {
                 const req = node.request || {};
                 const succ = this.edgeTarget(node.id, "success");
-                const err = this.edgeTarget(node.id, "error");
                 const qs = Object.entries(req.params || {}).map(([k, v]) => `${k}={Uri.EscapeDataString(Resolve(${this.py(String(Array.isArray(v) ? v.join(",") : v))}))}`).join("&");
                 L.push(`                string url = Resolve(${this.py(req.url)})${qs ? ` + "?" + $"${qs}"` : ""};`);
                 L.push(`                var reqMsg = new HttpRequestMessage(new HttpMethod(${this.py(req.method || "GET")}), url);`);
@@ -847,7 +1091,7 @@
                 L.push("                var text = await resp.Content.ReadAsStringAsync();");
                 L.push(`                Console.WriteLine($"[${req.method}] {url} -> {(int)resp.StatusCode}");`);
                 L.push("                try { last = JsonSerializer.Deserialize<JsonElement>(text); } catch { last = null; }");
-                L.push(`                node = resp.IsSuccessStatusCode ? ${succ ? this.py(succ) : "null"} : ${err ? this.py(err) : "null"};`);
+                L.push(`                node = resp.IsSuccessStatusCode ? ${succ ? this.py(succ) : "null"} : ${this._errNextCs(node.id, "error")};`);
             } else if (node.type === "condition") {
                 const c = node.condition;
                 const t = this.edgeTarget(node.id, "true");
@@ -855,9 +1099,9 @@
                 L.push(`                string _l = GetPath(${this.py(c.left)});`);
                 let expr;
                 if (c.op === "exists") expr = '(_l != "")';
-                else if (c.op === "==") expr = `(_l == ${this.py(c.right)})`;
-                else if (c.op === "!=") expr = `(_l != ${this.py(c.right)})`;
-                else expr = `(double.Parse(_l) ${c.op} double.Parse(${this.py(c.right)}))`;
+                else if (c.op === "==") expr = `(_l == Resolve(${this.py(c.right)}))`;
+                else if (c.op === "!=") expr = `(_l != Resolve(${this.py(c.right)}))`;
+                else expr = `(double.Parse(_l) ${c.op} double.Parse(Resolve(${this.py(c.right)})))`;
                 L.push(`                bool _ok; try { _ok = ${expr}; } catch { _ok = false; }`);
                 L.push(`                node = _ok ? ${t ? this.py(t) : "null"} : ${f ? this.py(f) : "null"};`);
             } else if (node.type === "loop") {
@@ -868,30 +1112,47 @@
                 L.push(`                else { counters[${this.py(node.id)}] = 0; node = ${d ? this.py(d) : "null"}; }`);
             } else if (node.type === "variable") {
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`                vars[${this.py(node.variable.name)}] = GetPath(${this.py(node.variable.path.replace(/^last\./, ""))});`);
+                L.push(`                { var _ve = GetPathElement(${this.py(node.variable.path)}); if (_ve != null) vars[${this.py(node.variable.name)}] = _ve.Value; }`);
                 L.push(`                node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "logmsg") {
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`                Console.WriteLine(${this.py(node.logmsg.text)});`);
+                L.push(`                Console.WriteLine(Resolve(${this.py(node.logmsg.text)}));`);
                 L.push(`                node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "savefile") {
                 const s = node.savefile;
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`                // СОХРАНЕНИЕ: выгрузите ${s.source} в ${s.filename}.${s.format}`);
+                L.push(`                SaveToFile(${this.py(s.source)}, ${this.py(s.filename + "." + s.format)}, ${this.py(s.format)});`);
                 L.push(`                node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "notify") {
                 const n = node.notify;
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`                // Уведомление (${n.channel}) — отправьте через http.PostAsync`);
-                if (n.channel === "telegram" || n.channel === "both") L.push(`                await http.GetAsync($"https://api.telegram.org/bot${n.tgToken}/sendMessage?chat_id=${n.tgChat}&text={Uri.EscapeDataString(${this.py(n.text)})}");`);
+                L.push(`                await NotifyAsync(${this.py(n.channel)}, Resolve(${this.py(n.text)}), ${this.py(n.tgToken)}, ${this.py(n.tgChat)}, ${this.py(n.discordUrl)});`);
                 L.push(`                node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "filter") {
+                const f = node.filter;
                 const found = this.edgeTarget(node.id, "found");
-                L.push(`                // ФИЛЬТР: ${node.filter.source} где ${node.filter.field} ${node.filter.op} ${node.filter.value}`);
-                L.push(`                node = ${found ? this.py(found) : "null"};`);
+                const empty = this.edgeTarget(node.id, "empty");
+                L.push("                {");
+                L.push("                    JsonElement _fv; var _res = new List<JsonElement>();");
+                L.push(`                    foreach (var x in GetPathArray(${this.py(f.source)})) {`);
+                L.push("                        if (x.ValueKind != JsonValueKind.Object) continue;");
+                L.push(`                        if (${this.csFilterExpr(f)}) _res.Add(x);`);
+                L.push("                    }");
+                L.push(`                    vars[${this.py(f.saveAs)}] = JsonSerializer.SerializeToElement(_res);`);
+                L.push("                    last = vars[" + this.py(f.saveAs) + "];");
+                L.push(`                    node = _res.Count > 0 ? ${found ? this.py(found) : "null"} : ${empty ? this.py(empty) : "null"};`);
+                L.push("                }");
             } else if (node.type === "proxy") {
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`                // ПРОКСИ: задайте HttpClientHandler.Proxy`);
+                const list = (node.proxy.list || "").split("\n").map(s => s.trim()).filter(Boolean);
+                L.push(`                var _plist = new List<string> { ${list.map(x => this.py(x)).join(", ")} };`);
+                if (node.proxy.mode === "random") {
+                    L.push("                currentProxy = _plist.Count > 0 ? _plist[new Random().Next(_plist.Count)] : \"\";");
+                } else {
+                    L.push(`                if (!proxyState.ContainsKey(${this.py(node.id)})) proxyState[${this.py(node.id)}] = 0;`);
+                    L.push("                currentProxy = _plist.Count > 0 ? _plist[proxyState[" + this.py(node.id) + "] % _plist.Count] : \"\";");
+                    L.push(`                proxyState[${this.py(node.id)}]++;`);
+                }
                 L.push(`                node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "delay") {
                 const nx = this.edgeTarget(node.id, "out");
@@ -920,16 +1181,73 @@
         L.push("package main");
         L.push("");
         L.push("import (");
+        L.push('\t"bytes"');
         L.push('\t"encoding/json"');
         L.push('\t"fmt"');
         L.push('\t"io"');
         L.push('\t"net/http"');
         L.push('\t"net/url"');
+        L.push('\t"os"');
+        L.push('\t"regexp"');
+        L.push('\t"strconv"');
         L.push('\t"strings"');
         L.push('\t"time"');
         L.push(")");
         L.push("");
         L.push('const TOKEN = "ВСТАВЬТЕ_ВАШ_ТОКЕН"');
+        L.push("");
+        L.push("type Ctx struct {");
+        L.push("\tLast interface{}");
+        L.push("\tVars map[string]interface{}");
+        L.push("}");
+        L.push("");
+        L.push("var ctx = Ctx{Vars: map[string]interface{}{}}");
+        L.push("var counters = map[string]int{}");
+        L.push("var proxyState = map[string]int{}");
+        L.push('var currentProxy string');
+        L.push("");
+        L.push("func getPath(path string) interface{} {");
+        L.push('\tif strings.HasPrefix(path, "vars.") {');
+        L.push("\t\treturn ctx.Vars[path[5:]]");
+        L.push("\t}");
+        L.push('\tsub := strings.TrimPrefix(path, "last.")');
+        L.push('\tif path == "last" { return ctx.Last }');
+        L.push("\tcur := ctx.Last");
+        L.push('\tfor _, p := range strings.Split(sub, ".") {');
+        L.push('\t\tp = strings.TrimSpace(p); if p == "" { continue }');
+        L.push('\t\tif p == "length" {');
+        L.push("\t\t\tif arr, ok := cur.([]interface{}); ok { return len(arr) }");
+        L.push("\t\t\treturn nil");
+        L.push("\t\t}");
+        L.push("\t\tif m, ok := cur.(map[string]interface{}); ok {");
+        L.push("\t\t\tcur = m[p]; continue");
+        L.push("\t\t}");
+        L.push("\t\tif arr, ok := cur.([]interface{}); ok {");
+        L.push("\t\t\ti, err := strconv.Atoi(p); if err != nil || i >= len(arr) { return nil }");
+        L.push("\t\t\tcur = arr[i]; continue");
+        L.push("\t\t}");
+        L.push("\t\treturn nil");
+        L.push("\t}");
+        L.push("\treturn cur");
+        L.push("}");
+        L.push("");
+        L.push("func resolve(s string) string {");
+        L.push('\tre := regexp.MustCompile(`\\{\\{\\s*([^}]+)\\s*\\}\\}`)');
+        L.push("\treturn re.ReplaceAllStringFunc(s, func(m string) string {");
+        L.push("\t\tp := strings.TrimSpace(re.FindStringSubmatch(m)[1])");
+        L.push("\t\tv := getPath(p); if v == nil { return \"\" }");
+        L.push("\t\treturn fmt.Sprint(v)");
+        L.push("\t})");
+        L.push("}");
+        L.push("");
+        L.push("func toFloat(v interface{}) float64 {");
+        L.push("\tswitch t := v.(type) {");
+        L.push("\tcase float64: return t");
+        L.push("\tcase int: return float64(t)");
+        L.push("\tcase string: f, _ := strconv.ParseFloat(t, 64); return f");
+        L.push("\tdefault: return 0");
+        L.push("\t}");
+        L.push("}");
         L.push("");
         L.push("func apiCall(method, u string, params, body map[string]string) (int, map[string]interface{}) {");
         L.push("\tif len(params) > 0 {");
@@ -943,10 +1261,11 @@
         L.push("\t\tfor k, v := range body { f.Set(k, v) }");
         L.push("\t\treqBody = strings.NewReader(f.Encode())");
         L.push("\t}");
-        L.push("\treq, _ := http.NewRequest(method, u, reqBody)");
+        L.push("\treq, _ := http.NewRequest(method, resolve(u), reqBody)");
         L.push('\treq.Header.Set("Authorization", "Bearer "+TOKEN)');
         L.push('\tif len(body) > 0 { req.Header.Set("Content-Type", "application/x-www-form-urlencoded") }');
-        L.push("\tresp, err := http.DefaultClient.Do(req)");
+        L.push("\tclient := http.DefaultClient");
+        L.push("\tresp, err := client.Do(req)");
         L.push("\tif err != nil { return 0, nil }");
         L.push("\tdefer resp.Body.Close()");
         L.push("\tb, _ := io.ReadAll(resp.Body)");
@@ -955,11 +1274,33 @@
         L.push("\treturn resp.StatusCode, data");
         L.push("}");
         L.push("");
+        L.push("func notifySend(channel, text, tgToken, tgChat, discordUrl string) {");
+        L.push('\tif (channel == "telegram" || channel == "both") && tgToken != "" && tgChat != "" {');
+        L.push('\t\tb, _ := json.Marshal(map[string]string{"chat_id": tgChat, "text": text})');
+        L.push('\t\thttp.Post("https://api.telegram.org/bot"+tgToken+"/sendMessage", "application/json", bytes.NewReader(b))');
+        L.push("\t}");
+        L.push('\tif (channel == "discord" || channel == "both") && discordUrl != "" {');
+        L.push('\t\tb, _ := json.Marshal(map[string]string{"content": text})');
+        L.push('\t\thttp.Post(discordUrl, "application/json", bytes.NewReader(b))');
+        L.push("\t}");
+        L.push("}");
+        L.push("");
+        L.push("func saveToFile(path, filename, fmtName string) {");
+        L.push("\tv := getPath(path); if v == nil { fmt.Println(\"Нечего сохранять в\", filename); return }");
+        L.push('\tif fmtName == "csv" {');
+        L.push("\t\tarr, ok := v.([]interface{}); if !ok { arr = []interface{}{v} }");
+        L.push("\t\tvar lines []string");
+        L.push("\t\tfor _, row := range arr { b, _ := json.Marshal(row); lines = append(lines, string(b)) }");
+        L.push("\t\tos.WriteFile(filename, []byte(strings.Join(lines, \"\\n\")), 0644)");
+        L.push("\t} else {");
+        L.push("\t\tb, _ := json.MarshalIndent(v, \"\", \"  \"); os.WriteFile(filename, b, 0644)");
+        L.push("\t}");
+        L.push('\tfmt.Println("Сохранён файл", filename)');
+        L.push("}");
+        L.push("");
         L.push("func main() {");
         L.push(`\tnode := ${startTarget ? this.py(startTarget) : '""'}`);
         L.push("\tsteps := 0");
-        L.push("\tcounters := map[string]int{}");
-        L.push("\t_ = counters");
         L.push("\tfor node != \"\" && steps < 300 {");
         L.push("\t\tsteps++");
         L.push("\t\tswitch node {");
@@ -969,19 +1310,25 @@
             if (node.type === "request") {
                 const req = node.request || {};
                 const succ = this.edgeTarget(node.id, "success");
-                const err = this.edgeTarget(node.id, "error");
                 L.push(`\t\t\tparams := ${this.goMap(req.params || {})}`);
                 L.push(`\t\t\tbody := ${req.body && Object.keys(req.body).length ? this.goMap(req.body) : "map[string]string{}"}`);
                 L.push(`\t\t\tcode, data := apiCall(${this.py(req.method || "GET")}, ${this.py(req.url)}, params, body)`);
-                L.push(`\t\t\tfmt.Printf("[${req.method}] %s -> %d\\n", ${this.py(req.url)}, code)`);
-                L.push("\t\t\t_ = data");
-                L.push(`\t\t\tif code < 400 { node = ${succ ? this.py(succ) : '""'} } else { node = ${err ? this.py(err) : '""'} }`);
+                L.push(`\t\t\tfmt.Printf("[${req.method}] %s -> %d\\n", resolve(${this.py(req.url)}), code)`);
+                L.push("\t\t\tctx.Last = data");
+                L.push(`\t\t\tif code < 400 { node = ${succ ? this.py(succ) : '""'} } else { node = ${this._errNextGo(node.id, "error")} }`);
             } else if (node.type === "condition") {
                 const c = node.condition;
                 const t = this.edgeTarget(node.id, "true");
                 const f = this.edgeTarget(node.id, "false");
-                L.push(`\t\t\t// Условие: ${this.pyComment(c.left + " " + c.op + " " + c.right)} — при необходимости уточните доступ к data`);
-                L.push(`\t\t\tnode = ${t ? this.py(t) : '""'} // ветка «Да»; ветка «Нет»: ${f ? this.py(f) : '""'}`);
+                L.push(`\t\t\t_l := fmt.Sprint(getPath(${this.py(c.left)}))`);
+                if (c.op === "exists") {
+                    L.push('\t\t\t_ok := _l != "" && _l != "<nil>"');
+                } else if (c.op === "==" || c.op === "!=") {
+                    L.push(`\t\t\t_ok := _l ${c.op === "==" ? "==" : "!="} resolve(${this.py(c.right)})`);
+                } else {
+                    L.push(`\t\t\t_ok := toFloat(_l) ${c.op} toFloat(resolve(${this.py(c.right)}))`);
+                }
+                L.push(`\t\t\tif _ok { node = ${t ? this.py(t) : '""'} } else { node = ${f ? this.py(f) : '""'} }`);
             } else if (node.type === "loop") {
                 const b = this.edgeTarget(node.id, "body");
                 const d = this.edgeTarget(node.id, "done");
@@ -994,28 +1341,45 @@
                 L.push("\t\t\t}");
             } else if (node.type === "variable") {
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`\t\t\t// Переменная ${this.pyComment(node.variable.name + " = " + node.variable.path)} (доступ к data уточните вручную)`);
+                L.push(`\t\t\tctx.Vars[${this.py(node.variable.name)}] = getPath(${this.py(node.variable.path)})`);
                 L.push(`\t\t\tnode = ${nx ? this.py(nx) : '""'}`);
             } else if (node.type === "logmsg") {
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`\t\t\tfmt.Println(${this.py(node.logmsg.text)})`);
+                L.push(`\t\t\tfmt.Println(resolve(${this.py(node.logmsg.text)}))`);
                 L.push(`\t\t\tnode = ${nx ? this.py(nx) : '""'}`);
             } else if (node.type === "savefile") {
                 const s = node.savefile;
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`\t\t\t// СОХРАНЕНИЕ: выгрузите ${s.source} в ${s.filename}.${s.format}`);
+                L.push(`\t\t\tsaveToFile(${this.py(s.source)}, ${this.py(s.filename + "." + s.format)}, ${this.py(s.format)})`);
                 L.push(`\t\t\tnode = ${nx ? this.py(nx) : '""'}`);
             } else if (node.type === "notify") {
+                const n = node.notify;
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`\t\t\t// Уведомление (${node.notify.channel}) — отправьте через http.Post`);
+                L.push(`\t\t\tnotifySend(${this.py(n.channel)}, resolve(${this.py(n.text)}), ${this.py(n.tgToken)}, ${this.py(n.tgChat)}, ${this.py(n.discordUrl)})`);
                 L.push(`\t\t\tnode = ${nx ? this.py(nx) : '""'}`);
             } else if (node.type === "filter") {
+                const f = node.filter;
                 const found = this.edgeTarget(node.id, "found");
-                L.push(`\t\t\t// ФИЛЬТР: ${node.filter.source} где ${node.filter.field} ${node.filter.op} ${node.filter.value}`);
-                L.push(`\t\t\tnode = ${found ? this.py(found) : '""'}`);
+                const empty = this.edgeTarget(node.id, "empty");
+                L.push(`\t\t\t{ _arr, _ := getPath(${this.py(f.source)}).([]interface{}); var _res []interface{}`);
+                L.push("\t\t\tfor _, it := range _arr {");
+                L.push("\t\t\t\tx, ok := it.(map[string]interface{}); if !ok { continue }");
+                L.push(`\t\t\t\tif ${this.goFilterExpr(f)} { _res = append(_res, x) }`);
+                L.push("\t\t\t}");
+                L.push(`\t\t\tctx.Vars[${this.py(f.saveAs)}] = _res; ctx.Last = _res`);
+                L.push(`\t\t\tif len(_res) > 0 { node = ${found ? this.py(found) : '""'} } else { node = ${empty ? this.py(empty) : '""'} }`);
+                L.push("\t\t\t}");
             } else if (node.type === "proxy") {
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`\t\t\t// ПРОКСИ: задайте http.Transport.Proxy`);
+                const list = (node.proxy.list || "").split("\n").map(s => s.trim()).filter(Boolean);
+                L.push(`\t\t\t_plist := []string{${list.map(x => this.py(x)).join(", ")}}`);
+                if (node.proxy.mode === "random") {
+                    L.push("\t\t\tif len(_plist) > 0 { currentProxy = _plist[time.Now().UnixNano()%int64(len(_plist))] } else { currentProxy = \"\" }");
+                } else {
+                    L.push(`\t\t\t_pi := proxyState[${this.py(node.id)}]`);
+                    L.push("\t\t\tif len(_plist) > 0 { currentProxy = _plist[_pi%len(_plist)] } else { currentProxy = \"\" }");
+                    L.push(`\t\t\tproxyState[${this.py(node.id)}] = _pi + 1`);
+                }
                 L.push(`\t\t\tnode = ${nx ? this.py(nx) : '""'}`);
             } else if (node.type === "delay") {
                 const nx = this.edgeTarget(node.id, "out");
@@ -1062,6 +1426,20 @@
         return ge ? this.py(ge) : "null";
     },
 
+    _errNextCs(nodeId, errPort) {
+        const err = this.edgeTarget(nodeId, errPort);
+        if (err) return this.py(err);
+        const ge = this._globalErrTarget();
+        return ge ? this.py(ge) : "null";
+    },
+
+    _errNextGo(nodeId, errPort) {
+        const err = this.edgeTarget(nodeId, errPort);
+        if (err) return this.py(err);
+        const ge = this._globalErrTarget();
+        return ge ? this.py(ge) : '""';
+    },
+
     // Расширенные блоки: foreach, checker, sniper, subscenario (все языки)
     _cgExtNode(node, lang, pad, L) {
         const I = pad;
@@ -1104,18 +1482,39 @@
                 L.push(`${I}else if (counters[_ki] >= _arr.length) { counters[_ki] = 0; node = ${done ? py(done) : "null"}; }`);
                 L.push(`${I}else { context.vars[${py(fe.itemVar)}] = _arr[counters[_ki]]; context.vars[${py(fe.indexVar || "i")}] = counters[_ki]; context.last = _arr[counters[_ki]]; counters[_ki]++; node = ${body ? py(body) : "null"}; }`);
             } else if (lang === "bash") {
-                L.push(`${I}# For-each: ${fe.source} → ${fe.itemVar}`);
-                L.push(`${I}node=${body ? py(body) : "None"}  # упр. — доработайте цикл вручную`);
+                L.push(`${I}_arr=$(get_path ${py(fe.source)})`);
+                L.push(`${I}_ki=${py(node.id + "_fi")}`);
+                L.push(`${I}COUNTERS[$_ki]=${"${COUNTERS[$_ki]:-0}"}`);
+                L.push(`${I}_len=$(echo "$_arr" | jq 'if type=="array" then length else 0 end' 2>/dev/null || echo 0)`);
+                L.push(`${I}if [[ "$_len" -eq 0 || ${"${COUNTERS[$_ki]}"} -ge $_len ]]; then`);
+                L.push(`${I}  COUNTERS[$_ki]=0; node=${done ? py(done) : '""'}`);
+                L.push(`${I}else`);
+                L.push(`${I}  _it=$(echo "$_arr" | jq -c ".[${"${COUNTERS[$_ki]}"}]")`);
+                L.push(`${I}  VARS[${py(fe.itemVar)}]="$_it"; VARS[${py(fe.indexVar || "i")}]=${"${COUNTERS[$_ki]}"}`);
+                L.push(`${I}  LAST_JSON="$_it"; COUNTERS[$_ki]=$((COUNTERS[$_ki]+1))`);
+                L.push(`${I}  node=${body ? py(body) : '""'}`);
+                L.push(`${I}fi`);
             } else if (lang === "php") {
                 L.push(`${I}$arr = get_path($context, ${py(fe.source)}); $ki = ${py(node.id + "_fi")};`);
                 L.push(`${I}if (!is_array($arr) || $counters[$ki] >= count($arr)) { $counters[$ki]=0; $node=${done ? py(done) : "null"}; }`);
                 L.push(`${I}else { $context['vars'][${py(fe.itemVar)}]=$arr[$counters[$ki]]; $context['last']=$arr[$counters[$ki]]; $counters[$ki]++; $node=${body ? py(body) : "null"}; }`);
             } else if (lang === "csharp") {
-                L.push(`${I}// For-each ${fe.source}`);
-                L.push(`${I}node = ${body ? py(body) : '""'};`);
+                L.push(`${I}{`);
+                L.push(`${I}    var _arr = GetPathArray(${py(fe.source)});`);
+                L.push(`${I}    var _ki = ${py(node.id + "_fi")};`);
+                L.push(`${I}    if (!counters.ContainsKey(_ki)) counters[_ki] = 0;`);
+                L.push(`${I}    if (_arr.Count == 0 || counters[_ki] >= _arr.Count) { counters[_ki] = 0; node = ${done ? py(done) : '""'}; }`);
+                L.push(`${I}    else {`);
+                L.push(`${I}        var _it = _arr[counters[_ki]]; counters[_ki]++;`);
+                L.push(`${I}        vars[${py(fe.itemVar)}] = _it; last = _it;`);
+                L.push(`${I}        node = ${body ? py(body) : '""'};`);
+                L.push(`${I}    }`);
+                L.push(`${I}}`);
             } else if (lang === "go") {
-                L.push(`${I}// For-each ${fe.source}`);
-                L.push(`${I}node = ${body ? py(body) : '""'}`);
+                L.push(`${I}{ _arr, _ := getPath(${py(fe.source)}).([]interface{}); _ki := ${py(node.id + "_fi")}`);
+                L.push(`${I}if _arr == nil || counters[_ki] >= len(_arr) { counters[_ki] = 0; node = ${done ? py(done) : '""'} } else {`);
+                L.push(`${I}\tit := _arr[counters[_ki]]; counters[_ki]++; ctx.Vars[${py(fe.itemVar)}] = it; ctx.Last = it`);
+                L.push(`${I}\tnode = ${body ? py(body) : '""'} }`);
             }
             return true;
         }
@@ -1150,6 +1549,40 @@
                 L.push(`${I}  const _ok = !!_item.item_id && ${c.rejectSold !== false ? "!_sold" : "true"};`);
                 L.push(`${I}  node = _ok ? ${okP ? py(okP) : "null"} : ${failP ? py(failP) : "null"};`);
                 L.push(`${I}} catch (e) { node = ${failP ? py(failP) : "null"}; }`);
+            } else if (lang === "bash") {
+                L.push(`${I}_id=$(get_path ${py(c.itemPath)}); [[ -z "$_id" || "$_id" == "null" ]] && _id=$(resolve ${py(c.itemPath)})`);
+                L.push(`${I}_resp=$(curl -s -H "$AUTH" "https://prod-api.lzt.market/\${_id}")`);
+                if (c.rejectSold !== false) {
+                    L.push(`${I}_ok=$(echo "$_resp" | jq -r 'if (.item.item_id // .item_id) and ((.item.item_state // .item_state // "") != "paid") and ((.item.item_state // .item_state // "") != "deleted") and ((.item.is_sold // .is_sold // false) | not) then "1" else "0" end')`);
+                } else {
+                    L.push(`${I}_ok=$(echo "$_resp" | jq -r 'if (.item.item_id // .item_id) then "1" else "0" end')`);
+                }
+                L.push(`${I}if [[ "$_ok" == "1" ]]; then node=${okP ? py(okP) : '""'}; else node=${failP ? py(failP) : '""'}; fi`);
+            } else if (lang === "php") {
+                L.push(`${I}$id = get_path($context, ${py(c.itemPath)}) ?? resolve_val(${py(c.itemPath)});`);
+                L.push(`${I}$r = api_call("GET", "https://prod-api.lzt.market/" . $id, null, null, $TOKEN);`);
+                L.push(`${I}$item = is_array($r['data']) ? ($r['data']['item'] ?? $r['data']) : [];`);
+                L.push(`${I}$sold = in_array($item['item_state'] ?? '', ['paid','deleted']) || !empty($item['is_sold']);`);
+                L.push(`${I}$ok = !empty($item['item_id']) && ${c.rejectSold !== false ? "!$sold" : "true"};`);
+                L.push(`${I}$node = $ok ? ${okP ? py(okP) : "null"} : ${failP ? py(failP) : "null"};`);
+            } else if (lang === "csharp") {
+                L.push(`${I}{`);
+                L.push(`${I}    var _id = GetPath(${py(c.itemPath)}); if (string.IsNullOrEmpty(_id)) _id = Resolve(${py(c.itemPath)});`);
+                L.push(`${I}    var resp = await http.GetAsync($"https://prod-api.lzt.market/{_id}");`);
+                L.push(`${I}    var text = await resp.Content.ReadAsStringAsync();`);
+                L.push(`${I}    JsonElement _j; try { _j = JsonSerializer.Deserialize<JsonElement>(text); } catch { _j = default; }`);
+                L.push(`${I}  JsonElement _item = _j; if (_j.ValueKind == JsonValueKind.Object && _j.TryGetProperty("item", out var _it)) _item = _it;`);
+                L.push(`${I}    var _sold = _item.TryGetProperty("item_state", out var _st) && (_st.GetString() == "paid" || _st.GetString() == "deleted");`);
+                L.push(`${I}    var _ok = _item.TryGetProperty("item_id", out _) && ${c.rejectSold !== false ? "!_sold" : "true"};`);
+                L.push(`${I}    node = _ok ? ${okP ? py(okP) : '""'} : ${failP ? py(failP) : '""'};`);
+                L.push(`${I}}`);
+            } else if (lang === "go") {
+                L.push(`${I}{ _id := fmt.Sprint(getPath(${py(c.itemPath)})); if _id == "" { _id = resolve(${py(c.itemPath)}) }`);
+                L.push(`${I}code, data := apiCall("GET", "https://prod-api.lzt.market/"+_id, nil, nil)`);
+                L.push(`${I}var item map[string]interface{}; if data != nil { if it, ok := data["item"].(map[string]interface{}); ok { item = it } else { item = data } }`);
+                L.push(`${I}st, _ := item["item_state"].(string); sold := st == "paid" || st == "deleted"; _, hasId := item["item_id"]`);
+                L.push(`${I}ok := hasId && ${c.rejectSold !== false ? "!sold" : "true"} && code < 400`);
+                L.push(`${I}if ok { node = ${okP ? py(okP) : '""'} } else { node = ${failP ? py(failP) : '""'} } }`);
             } else {
                 L.push(`${I}# Checker: GET /{item_id}`);
                 L.push(`${I}node = ${okP ? py(okP) : (lang === "go" ? '""' : "None")};`);
@@ -1194,6 +1627,49 @@
                 L.push(`${I}  try { await axios.post(\`https://prod-api.lzt.market/\${_id}/fast-buy\`, {}, { headers: HEADERS }); context.vars._lzt_spend += _p; node = ${bought ? py(bought) : "null"}; _b = true; break; } catch(e) {}`);
                 L.push(`${I}}`);
                 L.push(`${I}if (!_b) node = ${skip ? py(skip) : "null"};`);
+            } else if (lang === "bash") {
+                L.push(`${I}VARS[_lzt_spend]=${"${VARS[_lzt_spend]:-0}"}`);
+                L.push(`${I}_items=$(get_path ${py(sn.source)})`);
+                L.push(`${I}node=${skip ? py(skip) : '""'}; _bought=0`);
+                L.push(`${I}_len=$(echo "$_items" | jq 'if type=="array" then length else 0 end' 2>/dev/null || echo 0)`);
+                L.push(`${I}for ((i=0; i<_len; i++)); do`);
+                L.push(`${I}  _iid=$(echo "$_items" | jq -r ".[$i].${sn.itemField || "item_id"} // empty")`);
+                L.push(`${I}  _price=$(echo "$_items" | jq -r ".[$i].${sn.priceField || "price"} // 0")`);
+                L.push(`${I}  [[ -z "$_iid" || "$_iid" == "null" ]] && continue`);
+                L.push(`${I}  _code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "$AUTH" "https://prod-api.lzt.market/\${_iid}/fast-buy")`);
+                L.push(`${I}  if [[ "$_code" -lt 400 ]]; then VARS[_lzt_spend]=$((${"${VARS[_lzt_spend]:-0}"} + \${_price:-0})); node=${bought ? py(bought) : '""'}; _bought=1; break; fi`);
+                L.push(`${I}done`);
+            } else if (lang === "php") {
+                L.push(`${I}if (!isset($context['vars']['_lzt_spend'])) $context['vars']['_lzt_spend'] = 0;`);
+                L.push(`${I}$items = get_path($context, ${py(sn.source)}) ?: []; $node = ${skip ? py(skip) : "null"}; $bought = false;`);
+                L.push(`${I}foreach ((array)$items as $_it) {`);
+                L.push(`${I}  $price = floatval($_it[${py(sn.priceField || "price")}] ?? 0); $iid = $_it[${py(sn.itemField || "item_id")}] ?? null;`);
+                L.push(`${I}  if (!$iid || $price > floatval(resolve_val(${py(String(sn.maxPrice))}))) continue;`);
+                L.push(`${I}  $br = api_call('POST', "https://prod-api.lzt.market/{$iid}/fast-buy", null, null, $TOKEN);`);
+                L.push(`${I}  if ($br['code'] < 400) { $context['vars']['_lzt_spend'] += $price; $node = ${bought ? py(bought) : "null"}; $bought = true; break; }`);
+                L.push(`${I}}`);
+            } else if (lang === "csharp") {
+                L.push(`${I}{`);
+                L.push(`${I}    if (!vars.ContainsKey("_lzt_spend")) vars["_lzt_spend"] = JsonSerializer.SerializeToElement(0);`);
+                L.push(`${I}    var _items = GetPathArray(${py(sn.source)}); node = ${skip ? py(skip) : '""'}; var _b = false;`);
+                L.push(`${I}    foreach (var _it in _items) {`);
+                L.push(`${I}        if (_it.ValueKind != JsonValueKind.Object) continue;`);
+                L.push(`${I}        var _iid = _it.TryGetProperty(${py(sn.itemField || "item_id")}, out var _idp) ? _idp.ToString() : "";`);
+                L.push(`${I}        double _price = 0; if (_it.TryGetProperty(${py(sn.priceField || "price")}, out var _pp)) double.TryParse(_pp.ToString(), out _price);`);
+                L.push(`${I}        if (string.IsNullOrEmpty(_iid)) continue;`);
+                L.push(`${I}        var _br = await http.PostAsync($"https://prod-api.lzt.market/{_iid}/fast-buy", null);`);
+                L.push(`${I}        if (_br.IsSuccessStatusCode) { node = ${bought ? py(bought) : '""'}; _b = true; break; }`);
+                L.push(`${I}    }`);
+                L.push(`${I}}`);
+            } else if (lang === "go") {
+                L.push(`${I}{ if _, ok := ctx.Vars["_lzt_spend"]; !ok { ctx.Vars["_lzt_spend"] = 0.0 }`);
+                L.push(`${I}items, _ := getPath(${py(sn.source)}).([]interface{}); node = ${skip ? py(skip) : '""'}; bought := false`);
+                L.push(`${I}for _, it := range items { x, ok := it.(map[string]interface{}); if !ok { continue }`);
+                L.push(`${I}  iid := fmt.Sprint(x[${py(sn.itemField || "item_id")}]); price := toFloat(x[${py(sn.priceField || "price")}])`);
+                L.push(`${I}  if iid == "" || iid == "<nil>" { continue }`);
+                L.push(`${I}  code, _ := apiCall("POST", "https://prod-api.lzt.market/"+iid+"/fast-buy", nil, nil)`);
+                L.push(`${I}  if code < 400 { ctx.Vars["_lzt_spend"] = toFloat(ctx.Vars["_lzt_spend"]) + price; node = ${bought ? py(bought) : '""'}; bought = true; break }`);
+                L.push(`${I}} }`);
             } else {
                 L.push(`${I}# Sniper: fast-buy first match`);
                 L.push(`${I}node = ${skip ? py(skip) : (lang === "go" ? '""' : "None")};`);
@@ -1201,13 +1677,59 @@
             return true;
         }
 
+        if (node.type === "ai") {
+            const a = node.ai || {};
+            const okP = et("success"), errP = et("error");
+            const prompt = (a.prompt || "Оцени лоты").slice(0, 80);
+            if (lang === "py" || lang === "pyasync") {
+                L.push(`${I}# ИИ: ${prompt}… → vars.${a.outputVar || "ai_result"}`);
+                L.push(`${I}# Вызов OpenAI-совместимого API — ключ из env OPENAI_API_KEY`);
+                L.push(`${I}_batch = get_path(context, ${py(a.source || "last.items")}) or []`);
+                L.push(`${I}# … POST /chat/completions с JSON лотов`);
+                L.push(`${I}node = ${okP ? py(okP) : "None"}`);
+            } else if (lang === "node") {
+                L.push(`${I}// ИИ batch: ${a.source || "last.items"} → ${a.outputVar || "ai_result"}`);
+                L.push(`${I}node = ${okP ? py(okP) : "null"};`);
+            } else if (lang === "bash") {
+                L.push(`${I}# ИИ: ${prompt}… → vars.${a.outputVar || "ai_result"} (OPENAI_API_KEY)`);
+                L.push(`${I}_batch=$(get_path ${py(a.source || "last.items")})`);
+                L.push(`${I}# POST /v1/chat/completions с JSON лотов`);
+                L.push(`${I}node=${okP ? py(okP) : '""'}`);
+            } else if (lang === "csharp") {
+                L.push(`${I}// ИИ: ${prompt}… → vars.${a.outputVar || "ai_result"} (OPENAI_API_KEY)`);
+                L.push(`${I}var _batch = GetPathArray(${py(a.source || "last.items")});`);
+                L.push(`${I}// POST /v1/chat/completions`);
+                L.push(`${I}node = ${okP ? py(okP) : '""'};`);
+            } else if (lang === "go") {
+                L.push(`${I}// ИИ: ${prompt}… → vars.${a.outputVar || "ai_result"} (OPENAI_API_KEY)`);
+                L.push(`${I}_ := getPath(${py(a.source || "last.items")})`);
+                L.push(`${I}node = ${okP ? py(okP) : '""'}`);
+            } else {
+                L.push(`${I}# AI block → ${a.outputVar || "ai_result"}`);
+                L.push(`${I}node = ${okP ? py(okP) : (lang === "go" ? '""' : "None")};`);
+            }
+            return true;
+        }
+
         if (node.type === "subscenario") {
             const nx = et("out");
             const ss = node.subscenario;
-            L.push(`${I}# Под-сценарий (templateId: ${ss.templateId || "?"}) — вставьте JSON или вызовите функцию`);
-            if (lang === "node") L.push(`${I}node = ${nx ? py(nx) : "null"};`);
-            else if (lang === "go") L.push(`${I}node = ${nx ? py(nx) : '""'}`);
-            else L.push(`${I}node = ${nx ? py(nx) : "None"}`);
+            if (lang === "node") {
+                L.push(`${I}// Под-сценарий (templateId: ${ss.templateId || "?"}) — вставьте JSON из scenario.json`);
+                L.push(`${I}node = ${nx ? py(nx) : "null"};`);
+            } else if (lang === "bash") {
+                L.push(`${I}# Под-сценарий (templateId: ${ss.templateId || "?"}) — загрузите scenario.json и выполните вложенный граф`);
+                L.push(`${I}node=${nx ? py(nx) : '""'}`);
+            } else if (lang === "csharp") {
+                L.push(`${I}// Под-сценарий (templateId: ${ss.templateId || "?"}) — вставьте вызов или JSON`);
+                L.push(`${I}node = ${nx ? py(nx) : '""'};`);
+            } else if (lang === "go") {
+                L.push(`${I}// Под-сценарий (templateId: ${ss.templateId || "?"}) — вставьте JSON или вызов функции`);
+                L.push(`${I}node = ${nx ? py(nx) : '""'}`);
+            } else {
+                L.push(`${I}# Под-сценарий (templateId: ${ss.templateId || "?"}) — вставьте JSON или вызовите функцию`);
+                L.push(`${I}node = ${nx ? py(nx) : "None"};`);
+            }
             return true;
         }
         return false;
@@ -1254,16 +1776,22 @@
     },
 
     /** README.md для ZIP-экспорта */
-    buildProjectReadme(title, data) {
+    buildProjectReadme(title, data, lang) {
         data = data || {};
+        lang = lang || this.scriptLang || "python";
         const nodes = data.nodes || this.nodes || [];
         const t = title || data.title || "LZT бот";
+        const meta = this.zipLangMeta(lang);
         let extra = "";
 
         const notifyNodes = nodes.filter(n => n.type === "notify" && n.notify);
         if (notifyNodes.length) {
             extra += "\n## Уведомления\n\n";
-            extra += "В сценарии есть блок «Уведомление». В `bot.py` используется **requests** (Telegram Bot API и Discord webhook), без отдельных библиотек.\n\n";
+            if (lang === "python" || lang === "python_async") {
+                extra += "В сценарии есть блок «Уведомление». В скрипте используется HTTP (Telegram Bot API и Discord webhook).\n\n";
+            } else {
+                extra += "В сценарии есть блок «Уведомление». Проверьте сгенерированный код и при необходимости доработайте отправку.\n\n";
+            }
             extra += "Перед запуском впишите в блоке уведомления в конструкторе (или в `scenario.json`):\n";
             const needTg = notifyNodes.some(n => n.notify.channel === "telegram" || n.notify.channel === "both");
             const needDc = notifyNodes.some(n => n.notify.channel === "discord" || n.notify.channel === "both");
@@ -1271,20 +1799,40 @@
             if (needDc) extra += "- **Discord:** `discordUrl` (URL webhook из настроек канала)\n";
         }
 
+        const runByLang = {
+            python: "pip install -r requirements.txt\npython bot.py",
+            python_async: "pip install -r requirements.txt\npython bot.py",
+            node: "npm install\nnode bot.js",
+            bash: "chmod +x bot.sh\n./bot.sh",
+            php: "php bot.php",
+            csharp: "dotnet run",
+            go: "go run .",
+        };
+        const tokenByLang = {
+            python: "`TOKEN` в начале `bot.py`",
+            python_async: "`TOKEN` в начале `bot.py`",
+            node: "`TOKEN` в начале `bot.js`",
+            bash: "`TOKEN` в начале `bot.sh`",
+            php: "`TOKEN` в начале `bot.php`",
+            csharp: "`TOKEN` в начале `Program.cs`",
+            go: "`TOKEN` в начале `main.go`",
+        };
+
         return `# ${t}
 
-Сгенерировано **LZT API Constructor**.
+Сгенерировано **LZT API Constructor** (${lang}).
 
 ## Запуск
 
 \`\`\`bash
-pip install -r requirements.txt
-python bot.py
+${runByLang[lang] || runByLang.python}
 \`\`\`
 
-> Впишите свой API-токен LOLZTEAM в переменную \`TOKEN\` в начале \`bot.py\`.
+> Впишите свой API-токен LOLZTEAM в переменную ${tokenByLang[lang] || tokenByLang.python}.
 ${extra}
-Файл \`scenario.json\` — исходный сценарий, его можно снова открыть в конструкторе.
+Файлы архива: \`${meta.main}\`${meta.deps ? `, \`${meta.deps}\`` : ""}, \`README.md\`, \`scenario.json\`.
+
+\`scenario.json\` — исходный сценарий, его можно снова открыть в конструкторе.
 `;
     },
     });

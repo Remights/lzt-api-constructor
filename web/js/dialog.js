@@ -25,8 +25,15 @@
         }, UI_ANIM_MS);
     }
 
+    function portalFloatingMenu(el) {
+        if (!el || el.dataset.portaled === "1") return;
+        document.body.appendChild(el);
+        el.dataset.portaled = "1";
+    }
+
     function showFloatingMenu(el) {
         if (!el) return;
+        portalFloatingMenu(el);
         el.style.display = "block";
         el.classList.remove("ui-closing");
         void el.offsetWidth;
@@ -35,6 +42,12 @@
 
     function hideFloatingMenu(el) {
         if (!el || el.style.display === "none" || el.classList.contains("ui-closing")) return;
+        if (document.body.classList.contains("tour-active")) {
+            el.style.display = "none";
+            el.classList.remove("ui-open", "ui-closing");
+            document.dispatchEvent(new CustomEvent("lzt-tour-panel-closed"));
+            return;
+        }
         el.classList.remove("ui-open");
         el.classList.add("ui-closing");
         window.setTimeout(() => {
@@ -45,6 +58,14 @@
 
     function animateCloseFloatingPanel(pop, backdrop, onEsc) {
         if (!pop || pop.classList.contains("ui-closing")) return;
+        if (document.body.classList.contains("tour-active")) {
+            if (onEsc) document.removeEventListener("keydown", onEsc);
+            backdrop?.remove();
+            pop.remove();
+            if (pop._close) delete pop._close;
+            document.dispatchEvent(new CustomEvent("lzt-tour-panel-closed"));
+            return;
+        }
         pop.classList.remove("ui-open");
         backdrop?.classList.remove("ui-open");
         pop.classList.add("ui-closing");
@@ -210,7 +231,10 @@
         };
 
         pop._close = close;
-        setTimeout(() => backdrop.addEventListener("pointerdown", close), 0);
+        setTimeout(() => backdrop.addEventListener("pointerdown", (e) => {
+            if (document.body.classList.contains("tour-active")) return;
+            close();
+        }), 0);
         document.addEventListener("keydown", onEsc);
         return close;
     }
@@ -232,6 +256,7 @@
         UI_ANIM_MS,
         showOverlay,
         hideOverlay,
+        portalFloatingMenu,
         showFloatingMenu,
         hideFloatingMenu,
         mountFloatingPanel,

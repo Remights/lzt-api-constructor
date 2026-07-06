@@ -91,6 +91,14 @@
             case "sniper":
                 out.sniper = { source: "last.items", maxPrice: "100", maxSpend: "500", ...(out.sniper || {}) };
                 break;
+            case "ai":
+                out.ai = {
+                    batch: true, batchLimit: 50, source: "last.items", outputVar: "ai_result",
+                    prompt: "Оцени лоты. Верни JSON {\"items\":[{\"item_id\":N,\"buy\":true,\"score\":8,\"reason\":\"...\"}]}",
+                    preset: "steam_batch",
+                    ...(out.ai || {}),
+                };
+                break;
             case "subscenario":
                 out.subscenario = { templateId: "", ...(out.subscenario || {}) };
                 break;
@@ -224,7 +232,7 @@
             "Формат scenario.json (координаты x/y НЕ нужны — конструктор расставит блоки сам):",
             '{ "title": "Название", "nodes": [...], "edges": [...] }',
             "nodes[]: { id, type, ...поля типа }. edges[]: { id, from, fromPort, to }.",
-            "Типы: start, request, condition, filter, loop, foreach, variable, delay, notify, savefile, logmsg, proxy, checker, sniper, subscenario, stop.",
+            "Типы: start, request, condition, filter, loop, foreach, variable, delay, notify, savefile, logmsg, proxy, checker, sniper, ai, subscenario, stop.",
             "Порты: start→out|onerror; request→success|error; condition→true|false; filter→found|empty; loop|foreach→body|done; checker→ok|fail; sniper→bought|skip|fail; остальные→out.",
             "Подстановки: {{last.items.length}}, {{vars.filtered}}, {{vars.item_id}}.",
             "Пример цепочки: start.out→request→filter.found→notify→delay→(обратно request) или stop.",

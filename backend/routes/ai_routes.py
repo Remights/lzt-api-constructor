@@ -252,7 +252,9 @@ def version_endpoint():
         if r.status_code == 200:
             data = r.json()
             latest = (data.get("tag_name") or APP_VERSION).lstrip("v")
-            download_url = data.get("html_url") or ""
+            assets = data.get("assets") or []
+            exe = next((a for a in assets if str(a.get("name", "")).lower().endswith(".exe")), None)
+            download_url = (exe or {}).get("browser_download_url") or data.get("html_url") or ""
     except Exception:
         pass
     return {"version": APP_VERSION, "latest": latest, "download_url": download_url}

@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -28,7 +28,7 @@ Thumbs.db
 !.env.example
 backend/local_build.py
 
-# VPS AI-прокладка — не публикуется (см. DEV-копию проекта)
+# VPS AI-прокладка — только локально в DEV
 deploy/
 
 # Readme.io exports (canonical specs: api/specs/*.json)
@@ -38,3 +38,7 @@ tools/
 
 # Generated (optional: scripts/generate_icon.py regenerates from icon.svg)
 # web/icon.ico
+
+# Локальный roadmap (не в public GitHub)
+docs/ROADMAP.md
+ROADMAP.md

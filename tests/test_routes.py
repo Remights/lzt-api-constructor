@@ -30,16 +30,17 @@ def test_config_returns_version(client):
 
 def test_config_returns_remaining_with_fingerprint(client):
     ai_gateway._rate_buckets.clear()
-    fp = "LZTConstruct/1.0.0"
+    fp = "LZTConstruct/1.3.0"
     r = client.get("/api/config", headers={"X-LZT-Client": fp})
     assert r.status_code == 200
     data = r.json()
     assert data.get("free_ai_remaining") == ai_gateway.FREE_LIMIT_PER_HOUR
 
 
-def test_free_ai_status(client):
+def test_free_ai_status(client, monkeypatch):
     ai_gateway._rate_buckets.clear()
-    fp = "LZTConstruct/1.0.0"
+    monkeypatch.setattr(ai_gateway, "groq_keys", lambda: ["test-key"])
+    fp = "LZTConstruct/1.3.0"
     r = client.get("/api/ai/free/status", headers={"X-LZT-Client": fp})
     assert r.status_code == 200
     data = r.json()

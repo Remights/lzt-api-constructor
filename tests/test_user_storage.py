@@ -23,13 +23,13 @@ def test_save_and_load_roundtrip(storage_file):
         "lzt_api_token": "secret",
         "lzt_scenarios": "[]",
         "ignored": "x",
-        "bad": 123,
+        "lzt_count": 123,
     })
     data = user_storage.load_all()
     assert data["lzt_api_token"] == "secret"
     assert data["lzt_scenarios"] == "[]"
     assert "ignored" not in data
-    assert data["bad"] == "123"
+    assert data["lzt_count"] == "123"
     assert storage_file.is_file()
 
 
