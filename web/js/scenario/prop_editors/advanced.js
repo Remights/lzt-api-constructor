@@ -98,6 +98,30 @@
         });
     });
 
+    R().register("script", ({ sc, node, pop, dismiss, esc }) => {
+        const s = node.script || (node.script = { filename: "", timeout: 30, saveAs: "script_out" });
+        pop.classList.add("pop-wide");
+        pop.innerHTML = `<div class="pop-title"><i class="fa-solid fa-puzzle-piece" style="color:#e67e22;"></i> Скрипт (хук)</div>
+            <label class="pop-label">Файл в папке hooks</label>
+            <input type="text" class="form-control" id="pop-fname" value="${esc(s.filename || "")}" placeholder="hook_example.py">
+            <label class="pop-label" style="margin-top:10px;">Сохранить stdout JSON как</label>
+            <input type="text" class="form-control" id="pop-saveas" value="${esc(s.saveAs || "script_out")}" placeholder="script_out">
+            <label class="pop-label" style="margin-top:10px;">Timeout, сек</label>
+            <input type="number" class="form-control" id="pop-timeout" value="${s.timeout || 30}" min="1" max="120">
+            <div class="pop-hint">Скрипт получает JSON в stdin (hook/last/vars) и должен печатать JSON в stdout. Путь к папке — в Настройках → Webhooks.</div>
+            <div class="pop-actions"><button class="btn-save" id="pop-ok">Готово</button></div>`;
+        document.body.appendChild(pop);
+        pop.querySelector("#pop-ok").addEventListener("click", () => {
+            s.filename = pop.querySelector("#pop-fname").value.trim();
+            s.saveAs = pop.querySelector("#pop-saveas").value.trim().replace(/[^\w]/g, "_") || "script_out";
+            s.timeout = parseInt(pop.querySelector("#pop-timeout").value, 10) || 30;
+            dismiss();
+            sc.render();
+            sc.regenScript();
+            sc.commit();
+        });
+    });
+
     R().register("subscenario", ({ sc, node, pop, dismiss, esc }) => {
         const ss = node.subscenario;
         let opts = "";

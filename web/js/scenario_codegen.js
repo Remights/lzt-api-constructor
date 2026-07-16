@@ -96,7 +96,7 @@
         const start = this.nodes.find(n => n.type === "start");
         const startTarget = start ? this.edgeTarget(start.id, "out") : null;
         const L = [];
-        L.push("import requests, time, re");
+        L.push("import requests, time, re, json");
         L.push("");
         L.push('TOKEN = "ВСТАВЬТЕ_ВАШ_ТОКЕН"');
         L.push('HEADERS = {"Authorization": f"Bearer {TOKEN}"}');
@@ -118,7 +118,12 @@
         L.push("");
         L.push("def resolve(val):");
         L.push("    if isinstance(val, str):");
-        L.push("        return re.sub(r'\\{\\{\\s*([^}]+)\\s*\\}\\}', lambda m: str(get_path(context, m.group(1).strip()) or ''), val)");
+        L.push("        def _sub(m):");
+        L.push("            v = get_path(context, m.group(1).strip())");
+        L.push("            if v is None: return ''");
+        L.push("            if isinstance(v, (dict, list)): return json.dumps(v, ensure_ascii=False)");
+        L.push("            return str(v)");
+        L.push("        return re.sub(r'\\{\\{\\s*([^}]+)\\s*\\}\\}', _sub, val)");
         L.push("    if isinstance(val, list): return [resolve(v) for v in val]");
         L.push("    if isinstance(val, dict): return {k: resolve(v) for k, v in val.items()}");
         L.push("    return val");
@@ -132,7 +137,7 @@
         L.push("    if not p: return None");
         L.push("    if '://' not in p:");
         L.push("        parts = p.split(':')");
-        L.push("        if len(parts) == 4: p = 'http://%s:%s@%s:%s' % (parts[2], parts[3], parts[0], parts[1])");
+        L.push("        if len(parts) >= 4: p = 'http://%s:%s@%s:%s' % (parts[2], ':'.join(parts[3:]), parts[0], parts[1])");
         L.push("        else: p = 'http://' + p");
         L.push("    return {'http': p, 'https': p}");
         L.push("");
@@ -165,12 +170,16 @@
         L.push("        with open(filename, 'w', encoding='utf-8') as f: _json.dump(value, f, ensure_ascii=False, indent=2)");
         L.push("    print('Сохранён файл', filename)");
         L.push("");
-        L.push("def do_request(method, url, params=None, data=None, retries=0, retry_delay=1000, timeout=15, respect_rl=True):");
+        L.push("def do_request(method, url, params=None, data=None, retries=0, retry_delay=1000, timeout=15, respect_rl=True, headers=None):");
         L.push("    attempt = 0");
         L.push("    rl_wait = 0");
         L.push("    while True:");
         L.push("        try:");
-        L.push("            r = requests.request(method, url, params=params, data=data, headers=HEADERS, proxies=make_proxies(), timeout=timeout)");
+        L.push("            _h = dict(HEADERS);");
+        L.push("            if headers: _h.update(headers)");
+        L.push("            kw = dict(params=params, headers=_h, proxies=make_proxies(), timeout=timeout)");
+        L.push("            if data is not None: kw['json'] = data");
+        L.push("            r = requests.request(method, url, **kw)");
         L.push("            if r.status_code == 429 and respect_rl and rl_wait < 8:");
         L.push("                ra = r.headers.get('Retry-After')");
         L.push("                wait = int(ra) if (ra and ra.isdigit()) else min(30, 2 ** rl_wait * 2)");
@@ -205,12 +214,15 @@
                 L.push(`        # ${this.pyComment(req.title || "Запрос")}`);
                 L.push(`        url = resolve(${this.py(req.url || "https://prod-api.lzt.market/steam")})`);
                 L.push(`        params = resolve(${this.pyDict(req.params || {})})`);
-                const rp = `retries=${req.retries || 0}, retry_delay=${req.retryDelay || 1000}, timeout=${req.timeout || 15}, respect_rl=${req.respectRateLimit !== false ? "True" : "False"}`;
+                L.push(`        _hdr = resolve(${this.pyDict(req.headers || {})})`);
+                const rp = `retries=${req.retries || 0}, retry_delay=${req.retryDelay || 1000}, timeout=${req.timeout || 15}, respect_rl=${req.respectRateLimit !== false ? "True" : "False"}, headers=_hdr`;
                 if (req.body && Object.keys(req.body).length) {
                     L.push(`        data = resolve(${this.pyDict(req.body)})`);
-                    L.push(`        r = do_request(${this.py(req.method || "GET")}, url, params=params, data=data, ${rp})`);
+                    L.push(`        try: r = do_request(${this.py(req.method || "GET")}, url, params=params, data=data, ${rp})`);
+                    L.push(`        except Exception as _ex: print('Ошибка запроса:', _ex); node = ${this._errNext(node.id, "error")}; continue`);
                 } else {
-                    L.push(`        r = do_request(${this.py(req.method || "GET")}, url, params=params, ${rp})`);
+                    L.push(`        try: r = do_request(${this.py(req.method || "GET")}, url, params=params, ${rp})`);
+                    L.push(`        except Exception as _ex: print('Ошибка запроса:', _ex); node = ${this._errNext(node.id, "error")}; continue`);
                 }
                 L.push(`        print("[${req.method}]", url, "->", r.status_code)`);
                 L.push("        try: context['last'] = r.json()");
@@ -226,9 +238,9 @@
                 if (c.op === "exists") {
                     L.push("        _ok = _l is not None and _l != ''");
                 } else if (c.op === "==" || c.op === "!=") {
-                    L.push(`        _ok = (str(_l) ${c.op} ${this.py(c.right)})`);
+                    L.push(`        _ok = (str(_l) ${c.op} str(resolve(${this.py(c.right)})))`);
                 } else {
-                    L.push("        try: _ok = (float(_l) " + c.op + " float(" + this.py(c.right) + "))");
+                    L.push("        try: _ok = (float(_l) " + c.op + " float(resolve(" + this.py(c.right) + ")))");
                     L.push("        except: _ok = False");
                 }
                 L.push(`        node = ${t ? this.py(t) : "None"} if _ok else ${f ? this.py(f) : "None"}`);
@@ -306,23 +318,22 @@
     pyFilterExpr(f) {
         const field = this.py(f.field);
         const val = this.py(f.value);
-        if (f.op === "exists") return `x.get(${field}) is not None`;
-        if (f.op === "==" ) return `str(x.get(${field})) == ${val}`;
-        if (f.op === "!=") return `str(x.get(${field})) != ${val}`;
-        // числовые сравнения безопасно
+        if (f.op === "exists") return "x.get(" + field + ") not in (None, '')";
+        if (f.op === "==" ) return "str(x.get(" + field + ")) == str(resolve(" + val + "))";
+        if (f.op === "!=") return "str(x.get(" + field + ")) != str(resolve(" + val + "))";
         const cmp = { ">": ">", "<": "<", ">=": ">=", "<=": "<=" }[f.op] || "==";
-        return `(_num(x.get(${field})) ${cmp} _num(${val}))`;
+        return "(_num(x.get(" + field + ")) " + cmp + " _num(resolve(" + val + ")))";
     },
 
     // JS-выражение фильтра для элемента x
     jsFilterExpr(f) {
         const field = this.py(f.field);
         const val = this.py(f.value);
-        if (f.op === "exists") return `x[${field}] != null`;
-        if (f.op === "==") return `String(x[${field}]) === ${val}`;
-        if (f.op === "!=") return `String(x[${field}]) !== ${val}`;
+        if (f.op === "exists") return "x[" + field + "] != null && x[" + field + "] !== ''";
+        if (f.op === "==") return "String(x[" + field + "]) === String(resolve(" + val + "))";
+        if (f.op === "!=") return "String(x[" + field + "]) !== String(resolve(" + val + "))";
         const cmp = { ">": ">", "<": "<", ">=": ">=", "<=": "<=" }[f.op] || "==";
-        return `parseFloat(x[${field}]) ${cmp} parseFloat(${val})`;
+        return "parseFloat(x[" + field + "]) " + cmp + " parseFloat(resolve(" + val + "))";
     },
 
     csFilterExpr(f) {
@@ -338,21 +349,21 @@
     goFilterExpr(f) {
         const field = this.py(f.field);
         const val = this.py(f.value);
-        if (f.op === "exists") return `_, ok := x[${field}]; ok`;
-        if (f.op === "==") return `fmt.Sprint(x[${field}]) == ${val}`;
-        if (f.op === "!=") return `fmt.Sprint(x[${field}]) != ${val}`;
+        if (f.op === "exists") return "func() bool { v, ok := x[" + field + "]; return ok && fmt.Sprint(v) != \"\" }()";
+        if (f.op === "==") return "fmt.Sprint(x[" + field + "]) == resolve(" + val + ")";
+        if (f.op === "!=") return "fmt.Sprint(x[" + field + "]) != resolve(" + val + ")";
         const cmp = { ">": ">", "<": "<", ">=": ">=", "<=": "<=" }[f.op] || "==";
-        return `toFloat(x[${field}]) ${cmp} toFloat(${val})`;
+        return "func() bool { if _, ok := x[" + field + "]; !ok { return false }; return toFloat(x[" + field + "]) " + cmp + " toFloat(resolve(" + val + ")) }()";
     },
 
     bashFilterJq(f) {
         const field = f.field.replace(/"/g, '\\"');
         const val = String(f.value).replace(/"/g, '\\"');
-        if (f.op === "exists") return `has("${field}")`;
+        if (f.op === "exists") return `((.${field} // null) != null) and ((.${field} | tostring) != "")`;
         if (f.op === "==") return `(.${field} | tostring) == "${val}"`;
         if (f.op === "!=") return `(.${field} | tostring) != "${val}"`;
         const cmp = { ">": ">", "<": "<", ">=": ">=", "<=": "<=" }[f.op] || "==";
-        return `((.${field} | tonumber?) // 0) ${cmp} ${parseFloat(val) || 0}`;
+        return `(has("${field}") and ((.${field} | tonumber?) != null) and ((.${field} | tonumber) ${cmp} ${parseFloat(val) || 0}))`;
     },
 
     pyComment(s) { return String(s).replace(/[\r\n]+/g, " ").slice(0, 80); },
@@ -383,7 +394,7 @@
     generatePythonAsync() {
         const { startTarget } = this.flow();
         const L = [];
-        L.push("import asyncio, re, aiohttp");
+        L.push("import asyncio, re, json, aiohttp");
         L.push("");
         L.push('TOKEN = "ВСТАВЬТЕ_ВАШ_ТОКЕН"');
         L.push('HEADERS = {"Authorization": f"Bearer {TOKEN}"}');
@@ -412,13 +423,18 @@
         L.push("    if not p: return None");
         L.push("    if '://' not in p:");
         L.push("        parts = p.split(':')");
-        L.push("        if len(parts) == 4: p = 'http://%s:%s@%s:%s' % (parts[2], parts[3], parts[0], parts[1])");
+        L.push("        if len(parts) >= 4: p = 'http://%s:%s@%s:%s' % (parts[2], ':'.join(parts[3:]), parts[0], parts[1])");
         L.push("        else: p = 'http://' + p");
         L.push("    return p");
         L.push("");
         L.push("def resolve(val):");
         L.push("    if isinstance(val, str):");
-        L.push("        return re.sub(r'\\{\\{\\s*([^}]+)\\s*\\}\\}', lambda m: str(get_path(context, m.group(1).strip()) or ''), val)");
+        L.push("        def _sub(m):");
+        L.push("            v = get_path(context, m.group(1).strip())");
+        L.push("            if v is None: return ''");
+        L.push("            if isinstance(v, (dict, list)): return json.dumps(v, ensure_ascii=False)");
+        L.push("            return str(v)");
+        L.push("        return re.sub(r'\\{\\{\\s*([^}]+)\\s*\\}\\}', _sub, val)");
         L.push("    if isinstance(val, list): return [resolve(v) for v in val]");
         L.push("    if isinstance(val, dict): return {k: resolve(v) for k, v in val.items()}");
         L.push("    return val");
@@ -448,18 +464,24 @@
                 const m = (req.method || "GET").toLowerCase();
                 L.push(`                url = resolve(${this.py(req.url)})`);
                 L.push(`                params = resolve(${this.pyDict(req.params || {})})`);
+                L.push(`                _hdr = resolve(${this.pyDict(req.headers || {})})`);
+                L.push("                _h = dict(HEADERS); _h.update(_hdr or {})");
                 const succ = this.edgeTarget(node.id, "success");
                 const err = this.edgeTarget(node.id, "error");
+                L.push(`                ok = False`);
+                L.push(`                try:`);
                 if (req.body && Object.keys(req.body).length) {
-                    L.push(`                data = resolve(${this.pyDict(req.body)})`);
-                    L.push(`                async with session.${m}(url, params=params, data=data, proxy=cur_proxy()) as r:`);
+                    L.push(`                    data = resolve(${this.pyDict(req.body)})`);
+                    L.push(`                    async with session.${m}(url, params=params, json=data, proxy=cur_proxy(), headers=_h) as r:`);
                 } else {
-                    L.push(`                async with session.${m}(url, params=params, proxy=cur_proxy()) as r:`);
+                    L.push(`                    async with session.${m}(url, params=params, proxy=cur_proxy(), headers=_h) as r:`);
                 }
-                L.push(`                    print("[${req.method}]", url, "->", r.status)`);
-                L.push("                    try: context['last'] = await r.json(content_type=None)");
-                L.push("                    except: context['last'] = None");
-                L.push("                    ok = r.status < 400");
+                L.push(`                        print("[${req.method}]", url, "->", r.status)`);
+                L.push("                        try: context['last'] = await r.json(content_type=None)");
+                L.push("                        except: context['last'] = None");
+                L.push("                        ok = r.status < 400");
+                L.push(`                except Exception as _ex:`);
+                L.push(`                    print('Ошибка запроса:', _ex); context['last'] = None; ok = False`);
                 L.push(`                node = ${succ ? this.py(succ) : "None"} if ok else ${this._errNext(node.id, "error")}`);
             } else if (node.type === "condition") {
                 const c = node.condition;
@@ -467,8 +489,8 @@
                 const f = this.edgeTarget(node.id, "false");
                 L.push(`                _l = get_path(context, ${this.py(c.left)})`);
                 if (c.op === "exists") L.push("                _ok = _l is not None and _l != ''");
-                else if (c.op === "==" || c.op === "!=") L.push(`                _ok = (str(_l) ${c.op} ${this.py(c.right)})`);
-                else { L.push("                try: _ok = (float(_l) " + c.op + " float(" + this.py(c.right) + "))"); L.push("                except: _ok = False"); }
+                else if (c.op === "==" || c.op === "!=") L.push(`                _ok = (str(_l) ${c.op} str(resolve(${this.py(c.right)})))`);
+                else { L.push("                try: _ok = (float(_l) " + c.op + " float(resolve(" + this.py(c.right) + ")))"); L.push("                except: _ok = False"); }
                 L.push(`                node = ${t ? this.py(t) : "None"} if _ok else ${f ? this.py(f) : "None"}`);
             } else if (node.type === "loop") {
                 const b = this.edgeTarget(node.id, "body");
@@ -505,9 +527,21 @@
             } else if (node.type === "savefile") {
                 const s = node.savefile;
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`                import json as _json`);
                 L.push(`                _val = get_path(context, ${this.py(s.source)})`);
-                L.push(`                open(${this.py(s.filename + "." + s.format)}, 'w', encoding='utf-8').write(_json.dumps(_val, ensure_ascii=False, indent=2))`);
+                if (s.format === "csv") {
+                    L.push(`                import csv as _csv, json as _json`);
+                    L.push(`                _rows = _val if isinstance(_val, list) else [_val]`);
+                    L.push(`                with open(${this.py(s.filename + ".csv")}, 'w', encoding='utf-8', newline='') as _f:`);
+                    L.push(`                    if _rows and isinstance(_rows[0], dict):`);
+                    L.push(`                        _w = _csv.DictWriter(_f, fieldnames=list(_rows[0].keys())); _w.writeheader()`);
+                    L.push(`                        for _r in _rows: _w.writerow({k: (_json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v) for k, v in _r.items()})`);
+                    L.push(`                    else:`);
+                    L.push(`                        _w = _csv.writer(_f); _w.writerow(['value'])`);
+                    L.push(`                        for _r in _rows: _w.writerow([_r])`);
+                } else {
+                    L.push(`                import json as _json`);
+                    L.push(`                open(${this.py(s.filename + "." + s.format)}, 'w', encoding='utf-8').write(_json.dumps(_val, ensure_ascii=False, indent=2))`);
+                }
                 L.push(`                print('Сохранён файл', ${this.py(s.filename + "." + s.format)})`);
                 L.push(`                node = ${nx ? this.py(nx) : "None"}`);
             } else if (node.type === "proxy") {
@@ -584,13 +618,14 @@
                 const err = this.edgeTarget(node.id, "error");
                 L.push(`      const url = resolve(${this.py(req.url)});`);
                 L.push(`      const params = resolve(${this.mapLiteral(req.params || {}, "js")});`);
+                L.push(`      const _hdr = Object.assign({}, HEADERS, resolve(${this.mapLiteral(req.headers || {}, "js")}) || {});`);
                 L.push("      let ok = false;");
                 L.push("      try {");
                 if (req.body && Object.keys(req.body).length) {
                     L.push(`        const data = resolve(${this.mapLiteral(req.body, "js")});`);
-                    L.push(`        const r = await axios({ method: ${this.py((req.method || "GET").toLowerCase())}, url, params, data, headers: HEADERS });`);
+                    L.push(`        const r = await axios({ method: ${this.py((req.method || "GET").toLowerCase())}, url, params, data, headers: _hdr });`);
                 } else {
-                    L.push(`        const r = await axios({ method: ${this.py((req.method || "GET").toLowerCase())}, url, params, headers: HEADERS });`);
+                    L.push(`        const r = await axios({ method: ${this.py((req.method || "GET").toLowerCase())}, url, params, headers: _hdr });`);
                 }
                 L.push(`        console.log("[${req.method}]", url, "->", r.status);`);
                 L.push("        context.last = r.data; ok = r.status < 400;");
@@ -603,9 +638,9 @@
                 L.push(`      const _l = getPath(context, ${this.py(c.left)});`);
                 let expr;
                 if (c.op === "exists") expr = "(_l !== undefined && _l !== null && _l !== '')";
-                else if (c.op === "==" ) expr = `(String(_l) === ${this.py(c.right)})`;
-                else if (c.op === "!=") expr = `(String(_l) !== ${this.py(c.right)})`;
-                else expr = `(parseFloat(_l) ${c.op} parseFloat(${this.py(c.right)}))`;
+                else if (c.op === "==" ) expr = `(String(_l) === String(resolve(${this.py(c.right)})))`;
+                else if (c.op === "!=") expr = `(String(_l) !== String(resolve(${this.py(c.right)})))`;
+                else expr = `(parseFloat(_l) ${c.op} parseFloat(resolve(${this.py(c.right)})))`;
                 L.push(`      const _ok = ${expr};`);
                 L.push(`      node = _ok ? ${t ? this.py(t) : "null"} : ${f ? this.py(f) : "null"};`);
             } else if (node.type === "loop") {
@@ -620,19 +655,28 @@
                 L.push(`      node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "logmsg") {
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`      console.log(${this.py(node.logmsg.text)});`);
+                L.push(`      console.log(resolve(${this.py(node.logmsg.text)}));`);
                 L.push(`      node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "savefile") {
                 const s = node.savefile;
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`      require('fs').writeFileSync(${this.py(s.filename + "." + s.format)}, JSON.stringify(getPath(context, ${this.py(s.source)}), null, 2));`);
-                L.push(`      console.log('Сохранён файл ${s.filename}.${s.format}');`);
+                L.push(`      { const _v = getPath(context, ${this.py(s.source)}); const _f = ${this.py(s.filename + "." + s.format)};`);
+                if (s.format === "csv") {
+                    L.push(`        const rows = Array.isArray(_v) ? _v : (_v != null ? [_v] : []);`);
+                    L.push(`        let csv = ''; if (rows.length && typeof rows[0] === 'object') { const cols = [...new Set(rows.flatMap(r => Object.keys(r||{})))]; csv = cols.join(',') + '\\n' + rows.map(r => cols.map(c => JSON.stringify(r?.[c] ?? '')).join(',')).join('\\n'); } else csv = 'value\\n' + rows.map(r => JSON.stringify(r)).join('\\n');`);
+                    L.push(`        require('fs').writeFileSync(_f, csv);`);
+                } else {
+                    L.push(`        require('fs').writeFileSync(_f, JSON.stringify(_v, null, 2));`);
+                }
+                L.push(`        console.log('Сохранён файл', _f); }`);
                 L.push(`      node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "notify") {
                 const n = node.notify;
                 const nx = this.edgeTarget(node.id, "out");
-                if (n.channel === "discord" || n.channel === "both") L.push(`      await axios.post(${this.py(n.discordUrl)}, { content: ${this.py(n.text)} }).catch(()=>{});`);
-                if (n.channel === "telegram" || n.channel === "both") L.push(`      await axios.post(\`https://api.telegram.org/bot${"${" + this.py(n.tgToken) + "}"}/sendMessage\`, { chat_id: ${this.py(n.tgChat)}, text: ${this.py(n.text)} }).catch(()=>{});`);
+                L.push(`      { const _txt = resolve(${this.py(n.text)});`);
+                if (n.channel === "discord" || n.channel === "both") L.push(`      await axios.post(${this.py(n.discordUrl)}, { content: _txt }).catch(()=>{});`);
+                if (n.channel === "telegram" || n.channel === "both") L.push(`      await axios.post("https://api.telegram.org/bot" + ${this.py(n.tgToken)} + "/sendMessage", { chat_id: ${this.py(n.tgChat)}, text: _txt }).catch(()=>{});`);
+                L.push(`      }`);
                 L.push(`      node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "filter") {
                 const f = node.filter;
@@ -641,8 +685,11 @@
                 L.push(`      { const _arr = getPath(context, ${this.py(f.source)}) || []; const _res = _arr.filter(x => x && ${this.jsFilterExpr(f)}); context.vars[${this.py(f.saveAs)}] = _res; context.last = _res; node = _res.length ? ${found ? this.py(found) : "null"} : ${empty ? this.py(empty) : "null"}; }`);
             } else if (node.type === "proxy") {
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`      // Прокси: настройте axios-агент вручную (см. https-proxy-agent). Список: ${this.pyComment((node.proxy.list || "").replace(/\n/g, ", "))}`);
-                L.push(`      node = ${nx ? this.py(nx) : "null"};`);
+                if (String(node.proxy?.list || "").trim()) {
+                    L.push(`      throw new Error("Блок Прокси в Node-экспорте не подключён к axios — используйте Python или https-proxy-agent");`);
+                } else {
+                    L.push(`      node = ${nx ? this.py(nx) : "null"};`);
+                }
             } else if (node.type === "delay") {
                 const nx = this.edgeTarget(node.id, "out");
                 L.push(`      await sleep(${node.delay.ms || 0});`);
@@ -694,19 +741,25 @@
         L.push("");
         L.push("get_path() {");
         L.push('  local path="$1"');
-        L.push('  if [[ "$path" == vars.* ]]; then echo "${VARS[${path#vars.}]:-}"; return; fi');
+        L.push('  if [[ "$path" == vars.* ]]; then');
+        L.push('    local rest="${path#vars.}" root="${rest%%.*}" nested=""');
+        L.push('    [[ "$rest" == *.* ]] && nested="${rest#*.}"');
+        L.push('    local raw="${VARS[$root]:-}"');
+        L.push('    if [[ -z "$nested" ]]; then echo "$raw"; return; fi');
+        L.push('    echo "$raw" | jq -c ".$nested // empty" 2>/dev/null || true');
+        L.push('    return');
+        L.push('  fi');
         L.push('  local jq_expr; jq_expr=$(path_to_jq "$path")');
-        L.push('  if [[ "$jq_expr" == vars:* ]]; then echo "${VARS[${jq_expr#vars:}]:-}"; return; fi');
         L.push('  echo "$LAST_JSON" | jq -c "$jq_expr // empty" 2>/dev/null || true');
         L.push("}");
         L.push("");
         L.push("resolve() {");
-        L.push('  local s="$1" key val');
-        L.push('  while [[ "$s" == *"{{"* ]]; do');
-        L.push('    key=$(echo "$s" | sed -n "s/.*{{\\s*\\([^}]*\\)\\s*}}.*/\\1/p" | head -1 | xargs)');
+        L.push('  local s="$1"');
+        L.push('  while [[ "$s" =~ \\{\\{([^}]*)\\}\\} ]]; do');
+        L.push('    local full="${BASH_REMATCH[0]}" key; key=$(echo "${BASH_REMATCH[1]}" | xargs)');
         L.push('    [[ -z "$key" ]] && break');
-        L.push('    val=$(get_path "$key")');
-        L.push('    s="${s//\\{\\{${key}\\}\\}/$val}"');
+        L.push('    local val; val=$(get_path "$key")');
+        L.push('    s="${s//$full/$val}"');
         L.push("  done");
         L.push('  echo "$s"');
         L.push("}");
@@ -748,13 +801,14 @@
                 L.push(`      # ${this.pyComment(req.title || "Запрос")}`);
                 L.push(`      _url=$(resolve ${this.py(req.url || "https://prod-api.lzt.market/")})`);
                 if (paramEntries.length) {
-                    const qs = paramEntries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(Array.isArray(v) ? v.join(",") : String(v))}`).join("&");
-                    L.push(`      [[ "$_url" == *\\?* ]] && _url+="&${qs.replace(/"/g, '\\"')}" || _url+="?${qs.replace(/"/g, '\\"')}"`);
+                    L.push(`      _params=$(resolve ${this.py(JSON.stringify(Object.fromEntries(paramEntries.map(([k, v]) => [k, Array.isArray(v) ? v.join(",") : String(v)]))))})`);
+                    L.push(`      _qs=$(echo "$_params" | jq -r 'to_entries|map("\\(.key|@uri)=\\(.value|tostring|@uri)")|join("&")' 2>/dev/null || true)`);
+                    L.push(`      if [[ -n "$_qs" ]]; then [[ "$_url" == *\\?* ]] && _url+="&$_qs" || _url+="?$_qs"; fi`);
                 }
                 if (req.body && Object.keys(req.body).length) {
-                    const bodyStr = Object.entries(req.body).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join("&");
+                    L.push(`      _body=$(resolve ${this.py(JSON.stringify(req.body))})`);
                     L.push('      _px=""; [[ -n "$CURRENT_PROXY" ]] && _px="-x $CURRENT_PROXY"');
-                    L.push(`      _code=$(curl -s -o /tmp/lzt_body -w "%{http_code}" -X ${req.method || "GET"} -H "$AUTH" $_px --data "${bodyStr.replace(/"/g, '\\"')}" "$_url")`);
+                    L.push(`      _code=$(curl -s -o /tmp/lzt_body -w "%{http_code}" -X ${req.method || "POST"} -H "$AUTH" -H "Content-Type: application/json" $_px -d "$_body" "$_url")`);
                     L.push('      LAST_JSON=$(cat /tmp/lzt_body 2>/dev/null || echo "null")');
                 } else {
                     L.push(`      _code=$(do_request ${this.py(req.method || "GET")} "$_url")`);
@@ -880,8 +934,9 @@
         L.push("    $ch = curl_init($url);");
         L.push("    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);");
         L.push("    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);");
-        L.push('    curl_setopt($ch, CURLOPT_HTTPHEADER, ["Authorization: Bearer $token"]);');
-        L.push("    if ($body) curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($body));");
+        L.push('    $headers = ["Authorization: Bearer $token"];');
+        L.push("    if ($body) { $headers[] = 'Content-Type: application/json'; curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body)); }");
+        L.push("    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);");
         L.push("    $resp = curl_exec($ch);");
         L.push("    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);");
         L.push("    curl_close($ch);");
@@ -905,7 +960,7 @@
                 L.push(`        $r = api_call(${this.py(req.method || "GET")}, $url, $params, $body, $TOKEN);`);
                 L.push(`        echo "[${req.method}] $url -> {$r['code']}\\n";`);
                 L.push("        $context['last'] = $r['data'];");
-                L.push(`        $node = $r['code'] < 400 ? ${succ ? this.py(succ) : "null"} : ${err ? this.py(err) : "null"};`);
+                L.push(`        $node = $r['code'] < 400 ? ${succ ? this.py(succ) : "null"} : ${this._errNextPhp(node.id, "error")};`);
             } else if (node.type === "condition") {
                 const c = node.condition;
                 const t = this.edgeTarget(node.id, "true");
@@ -913,9 +968,9 @@
                 L.push(`        $_l = get_path($context, ${this.py(c.left)});`);
                 let expr;
                 if (c.op === "exists") expr = "($_l !== null && $_l !== '')";
-                else if (c.op === "==") expr = `(strval($_l) === ${this.py(c.right)})`;
-                else if (c.op === "!=") expr = `(strval($_l) !== ${this.py(c.right)})`;
-                else expr = `(floatval($_l) ${c.op} floatval(${this.py(c.right)}))`;
+                else if (c.op === "==") expr = `(strval($_l) === strval(resolve_val(${this.py(c.right)})))`;
+                else if (c.op === "!=") expr = `(strval($_l) !== strval(resolve_val(${this.py(c.right)})))`;
+                else expr = `(floatval($_l) ${c.op} floatval(resolve_val(${this.py(c.right)})))`;
                 L.push(`        $_ok = ${expr};`);
                 L.push(`        $node = $_ok ? ${t ? this.py(t) : "null"} : ${f ? this.py(f) : "null"};`);
             } else if (node.type === "loop") {
@@ -930,25 +985,39 @@
                 L.push(`        $node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "logmsg") {
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`        echo ${this.py(node.logmsg.text)} . "\\n";`);
+                L.push(`        echo resolve_val(${this.py(node.logmsg.text)}) . "\\n";`);
                 L.push(`        $node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "savefile") {
                 const s = node.savefile;
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`        file_put_contents(${this.py(s.filename + "." + s.format)}, json_encode(get_path($context, ${this.py(s.source)}), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));`);
+                if (s.format === "csv") {
+                    L.push(`        $_val = get_path($context, ${this.py(s.source)});`);
+                    L.push(`        $_fp = fopen(${this.py(s.filename + ".csv")}, 'w');`);
+                    L.push(`        if (is_array($_val) && $_val && isset($_val[0]) && is_array($_val[0])) { fputcsv($_fp, array_keys($_val[0])); foreach ($_val as $_row) { if (is_array($_row)) fputcsv($_fp, array_map(function($v){ return is_array($v)?json_encode($v):$v; }, $_row)); } }`);
+                    L.push(`        else { fputcsv($_fp, ['value']); fputcsv($_fp, [is_array($_val)?json_encode($_val):strval($_val)]); }`);
+                    L.push(`        fclose($_fp);`);
+                } else {
+                    L.push(`        file_put_contents(${this.py(s.filename + "." + s.format)}, json_encode(get_path($context, ${this.py(s.source)}), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));`);
+                }
                 L.push(`        $node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "notify") {
                 const n = node.notify;
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`        // Уведомление (${n.channel}) — отправьте через curl/file_get_contents`);
-                if (n.channel === "telegram" || n.channel === "both") L.push(`        @file_get_contents("https://api.telegram.org/bot${n.tgToken}/sendMessage?chat_id=${n.tgChat}&text=" . urlencode(${this.py(n.text)}));`);
+                L.push(`        $_txt = resolve_val(${this.py(n.text)});`);
+                if (n.channel === "telegram" || n.channel === "both") {
+                    L.push(`        @file_get_contents("https://api.telegram.org/bot" . resolve_val(${this.py(n.tgToken)}) . "/sendMessage?chat_id=" . urlencode(resolve_val(${this.py(n.tgChat)})) . "&text=" . urlencode($_txt));`);
+                }
+                if (n.channel === "discord" || n.channel === "both") {
+                    L.push(`        $_du = resolve_val(${this.py(n.discordUrl)});`);
+                    L.push(`        if ($_du) { $ctx = stream_context_create(["http" => ["method" => "POST", "header" => "Content-Type: application/json\\r\\n", "content" => json_encode(["content" => $_txt])]]); @file_get_contents($_du, false, $ctx); }`);
+                }
                 L.push(`        $node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "filter") {
                 const f = node.filter;
                 const found = this.edgeTarget(node.id, "found");
                 const empty = this.edgeTarget(node.id, "empty");
-                L.push(`        _arr = get_path($context, ${this.py(f.source)}) ?: [];`);
-                L.push(`        _res = [];`);
+                L.push(`        $_arr = get_path($context, ${this.py(f.source)}) ?: [];`);
+                L.push(`        $_res = [];`);
                 L.push(`        foreach ((array)$_arr as $x) {`);
                 L.push(`            if (!is_array($x)) continue;`);
                 if (f.op === "exists") {
@@ -964,8 +1033,11 @@
                 L.push(`        $node = $_res ? ${found ? this.py(found) : "null"} : ${empty ? this.py(empty) : "null"};`);
             } else if (node.type === "proxy") {
                 const nx = this.edgeTarget(node.id, "out");
-                L.push(`        // ПРОКСИ: задайте CURLOPT_PROXY для запросов`);
-                L.push(`        $node = ${nx ? this.py(nx) : "null"};`);
+                if (String(node.proxy?.list || "").trim()) {
+                    L.push(`        throw new Exception("Блок Прокси в PHP-экспорте: задайте CURLOPT_PROXY вручную или используйте Python");`);
+                } else {
+                    L.push(`        $node = ${nx ? this.py(nx) : "null"};`);
+                }
             } else if (node.type === "delay") {
                 const nx = this.edgeTarget(node.id, "out");
                 L.push(`        usleep(${(node.delay.ms || 0) * 1000});`);
@@ -1015,22 +1087,25 @@
         L.push("        return el == null ? \"\" : el.Value.ToString();");
         L.push("    }");
         L.push("    static JsonElement? GetPathElement(string path) {");
+        L.push("        JsonElement? Walk(JsonElement cur, string[] segs, int start) {");
+        L.push("            for (int si = start; si < segs.Length; si++) {");
+        L.push("                var key = segs[si].Trim(); if (key == \"\") continue;");
+        L.push("                if (key == \"length\" && cur.ValueKind == JsonValueKind.Array) return JsonSerializer.SerializeToElement(cur.GetArrayLength());");
+        L.push("                if (cur.ValueKind == JsonValueKind.Array && int.TryParse(key, out int i) && i < cur.GetArrayLength()) cur = cur[i];");
+        L.push("                else if (cur.ValueKind == JsonValueKind.Object && cur.TryGetProperty(key, out var nx)) cur = nx;");
+        L.push("                else return null;");
+        L.push("            }");
+        L.push("            return cur;");
+        L.push("        }");
         L.push("        if (path.StartsWith(\"vars.\")) {");
-        L.push("            var k = path.Substring(5);");
-        L.push("            return vars.TryGetValue(k, out var v) ? v : (JsonElement?)null;");
+        L.push("            var segs = path.Substring(5).Split('.');");
+        L.push("            if (segs.Length == 0 || !vars.TryGetValue(segs[0], out var root)) return null;");
+        L.push("            return Walk(root, segs, 1);");
         L.push("        }");
         L.push("        var sub = path.StartsWith(\"last.\") ? path.Substring(5) : (path == \"last\" ? \"\" : path);");
         L.push("        if (last == null) return null;");
         L.push("        if (sub == \"\") return last;");
-        L.push("        JsonElement cur = last.Value;");
-        L.push("        foreach (var p in sub.Split('.')) {");
-        L.push("            var key = p.Trim(); if (key == \"\") continue;");
-        L.push("            if (key == \"length\" && cur.ValueKind == JsonValueKind.Array) return JsonSerializer.SerializeToElement(cur.GetArrayLength());");
-        L.push("            if (cur.ValueKind == JsonValueKind.Array && int.TryParse(key, out int i) && i < cur.GetArrayLength()) cur = cur[i];");
-        L.push("            else if (cur.ValueKind == JsonValueKind.Object && cur.TryGetProperty(key, out var nx)) cur = nx;");
-        L.push("            else return null;");
-        L.push("        }");
-        L.push("        return cur;");
+        L.push("        return Walk(last.Value, sub.Split('.'), 0);");
         L.push("    }");
         L.push("    static List<JsonElement> GetPathArray(string path) {");
         L.push("        var el = GetPathElement(path);");
@@ -1079,13 +1154,14 @@
                 const req = node.request || {};
                 const succ = this.edgeTarget(node.id, "success");
                 const qs = Object.entries(req.params || {}).map(([k, v]) => `${k}={Uri.EscapeDataString(Resolve(${this.py(String(Array.isArray(v) ? v.join(",") : v))}))}`).join("&");
-                L.push(`                string url = Resolve(${this.py(req.url)})${qs ? ` + "?" + $"${qs}"` : ""};`);
+                L.push(`                string url = Resolve(${this.py(req.url)});`);
+                if (qs) L.push(`                url += (url.Contains("?") ? "&" : "?") + $"${qs}";`);
                 L.push(`                var reqMsg = new HttpRequestMessage(new HttpMethod(${this.py(req.method || "GET")}), url);`);
                 if (req.body && Object.keys(req.body).length) {
-                    const pairs = Object.entries(req.body).map(([k, v]) => `                    new KeyValuePair<string,string>(${this.py(k)}, Resolve(${this.py(String(v))})),`).join("\n");
-                    L.push("                reqMsg.Content = new FormUrlEncodedContent(new[] {");
+                    const pairs = Object.entries(req.body).map(([k, v]) => `                    [${this.py(k)}] = Resolve(${this.py(String(v))}),`).join("\n");
+                    L.push("                reqMsg.Content = new StringContent(JsonSerializer.Serialize(new Dictionary<string,string> {");
                     L.push(pairs);
-                    L.push("                });");
+                    L.push('                }), System.Text.Encoding.UTF8, "application/json");');
                 }
                 L.push("                var resp = await http.SendAsync(reqMsg);");
                 L.push("                var text = await resp.Content.ReadAsStringAsync();");
@@ -1144,16 +1220,11 @@
                 L.push("                }");
             } else if (node.type === "proxy") {
                 const nx = this.edgeTarget(node.id, "out");
-                const list = (node.proxy.list || "").split("\n").map(s => s.trim()).filter(Boolean);
-                L.push(`                var _plist = new List<string> { ${list.map(x => this.py(x)).join(", ")} };`);
-                if (node.proxy.mode === "random") {
-                    L.push("                currentProxy = _plist.Count > 0 ? _plist[new Random().Next(_plist.Count)] : \"\";");
+                if (String(node.proxy?.list || "").trim()) {
+                    L.push(`                throw new NotImplementedException("Proxy block: HttpClientHandler not wired — use Python export");`);
                 } else {
-                    L.push(`                if (!proxyState.ContainsKey(${this.py(node.id)})) proxyState[${this.py(node.id)}] = 0;`);
-                    L.push("                currentProxy = _plist.Count > 0 ? _plist[proxyState[" + this.py(node.id) + "] % _plist.Count] : \"\";");
-                    L.push(`                proxyState[${this.py(node.id)}]++;`);
+                    L.push(`                node = ${nx ? this.py(nx) : "null"};`);
                 }
-                L.push(`                node = ${nx ? this.py(nx) : "null"};`);
             } else if (node.type === "delay") {
                 const nx = this.edgeTarget(node.id, "out");
                 L.push(`                Thread.Sleep(${node.delay.ms || 0});`);
@@ -1208,7 +1279,18 @@
         L.push("");
         L.push("func getPath(path string) interface{} {");
         L.push('\tif strings.HasPrefix(path, "vars.") {');
-        L.push("\t\treturn ctx.Vars[path[5:]]");
+        L.push("\t\tparts := strings.Split(path[5:], \".\")");
+        L.push("\t\tvar cur interface{} = ctx.Vars[parts[0]]");
+        L.push("\t\tfor _, p := range parts[1:] {");
+        L.push("\t\t\tp = strings.TrimSpace(p); if p == \"\" { continue }");
+        L.push("\t\t\tif m, ok := cur.(map[string]interface{}); ok { cur = m[p]; continue }");
+        L.push("\t\t\tif arr, ok := cur.([]interface{}); ok {");
+        L.push("\t\t\t\ti, err := strconv.Atoi(p); if err != nil || i >= len(arr) { return nil }");
+        L.push("\t\t\t\tcur = arr[i]; continue");
+        L.push("\t\t\t}");
+        L.push("\t\t\treturn nil");
+        L.push("\t\t}");
+        L.push("\t\treturn cur");
         L.push("\t}");
         L.push('\tsub := strings.TrimPrefix(path, "last.")');
         L.push('\tif path == "last" { return ctx.Last }');
@@ -1252,18 +1334,19 @@
         L.push("func apiCall(method, u string, params, body map[string]string) (int, map[string]interface{}) {");
         L.push("\tif len(params) > 0 {");
         L.push("\t\tq := url.Values{}");
-        L.push("\t\tfor k, v := range params { q.Set(k, v) }");
+        L.push("\t\tfor k, v := range params { q.Set(k, resolve(v)) }");
         L.push('\t\tif strings.Contains(u, "?") { u += "&" + q.Encode() } else { u += "?" + q.Encode() }');
         L.push("\t}");
         L.push("\tvar reqBody io.Reader");
         L.push("\tif len(body) > 0 {");
-        L.push("\t\tf := url.Values{}");
-        L.push("\t\tfor k, v := range body { f.Set(k, v) }");
-        L.push("\t\treqBody = strings.NewReader(f.Encode())");
+        L.push("\t\tm := map[string]string{}");
+        L.push("\t\tfor k, v := range body { m[k] = resolve(v) }");
+        L.push("\t\tb, _ := json.Marshal(m)");
+        L.push("\t\treqBody = bytes.NewReader(b)");
         L.push("\t}");
         L.push("\treq, _ := http.NewRequest(method, resolve(u), reqBody)");
         L.push('\treq.Header.Set("Authorization", "Bearer "+TOKEN)');
-        L.push('\tif len(body) > 0 { req.Header.Set("Content-Type", "application/x-www-form-urlencoded") }');
+        L.push('\tif len(body) > 0 { req.Header.Set("Content-Type", "application/json") }');
         L.push("\tclient := http.DefaultClient");
         L.push("\tresp, err := client.Do(req)");
         L.push("\tif err != nil { return 0, nil }");
@@ -1371,16 +1454,11 @@
                 L.push("\t\t\t}");
             } else if (node.type === "proxy") {
                 const nx = this.edgeTarget(node.id, "out");
-                const list = (node.proxy.list || "").split("\n").map(s => s.trim()).filter(Boolean);
-                L.push(`\t\t\t_plist := []string{${list.map(x => this.py(x)).join(", ")}}`);
-                if (node.proxy.mode === "random") {
-                    L.push("\t\t\tif len(_plist) > 0 { currentProxy = _plist[time.Now().UnixNano()%int64(len(_plist))] } else { currentProxy = \"\" }");
+                if (String(node.proxy?.list || "").trim()) {
+                    L.push(`\t\t\tpanic("proxy block: currentProxy not wired to http.Client — use Python export")`);
                 } else {
-                    L.push(`\t\t\t_pi := proxyState[${this.py(node.id)}]`);
-                    L.push("\t\t\tif len(_plist) > 0 { currentProxy = _plist[_pi%len(_plist)] } else { currentProxy = \"\" }");
-                    L.push(`\t\t\tproxyState[${this.py(node.id)}] = _pi + 1`);
+                    L.push(`\t\t\tnode = ${nx ? this.py(nx) : '""'}`);
                 }
-                L.push(`\t\t\tnode = ${nx ? this.py(nx) : '""'}`);
             } else if (node.type === "delay") {
                 const nx = this.edgeTarget(node.id, "out");
                 L.push(`\t\t\ttime.Sleep(${node.delay.ms || 0} * time.Millisecond)`);
@@ -1440,6 +1518,13 @@
         return ge ? this.py(ge) : '""';
     },
 
+    _errNextPhp(nodeId, errPort) {
+        const err = this.edgeTarget(nodeId, errPort);
+        if (err) return this.py(err);
+        const ge = this._globalErrTarget();
+        return ge ? this.py(ge) : "null";
+    },
+
     // Расширенные блоки: foreach, checker, sniper, subscenario (все языки)
     _cgExtNode(node, lang, pad, L) {
         const I = pad;
@@ -1496,25 +1581,26 @@
                 L.push(`${I}fi`);
             } else if (lang === "php") {
                 L.push(`${I}$arr = get_path($context, ${py(fe.source)}); $ki = ${py(node.id + "_fi")};`);
+                L.push(`${I}if (!isset($counters[$ki])) $counters[$ki] = 0;`);
                 L.push(`${I}if (!is_array($arr) || $counters[$ki] >= count($arr)) { $counters[$ki]=0; $node=${done ? py(done) : "null"}; }`);
-                L.push(`${I}else { $context['vars'][${py(fe.itemVar)}]=$arr[$counters[$ki]]; $context['last']=$arr[$counters[$ki]]; $counters[$ki]++; $node=${body ? py(body) : "null"}; }`);
+                L.push(`${I}else { $context['vars'][${py(fe.itemVar)}]=$arr[$counters[$ki]]; $context['vars'][${py(fe.indexVar || "i")}]=$counters[$ki]; $context['last']=$arr[$counters[$ki]]; $counters[$ki]++; $node=${body ? py(body) : "null"}; }`);
             } else if (lang === "csharp") {
                 L.push(`${I}{`);
                 L.push(`${I}    var _arr = GetPathArray(${py(fe.source)});`);
                 L.push(`${I}    var _ki = ${py(node.id + "_fi")};`);
                 L.push(`${I}    if (!counters.ContainsKey(_ki)) counters[_ki] = 0;`);
-                L.push(`${I}    if (_arr.Count == 0 || counters[_ki] >= _arr.Count) { counters[_ki] = 0; node = ${done ? py(done) : '""'}; }`);
+                L.push(`${I}    if (_arr.Count == 0 || counters[_ki] >= _arr.Count) { counters[_ki] = 0; node = ${done ? py(done) : "null"}; }`);
                 L.push(`${I}    else {`);
-                L.push(`${I}        var _it = _arr[counters[_ki]]; counters[_ki]++;`);
+                L.push(`${I}        var _it = _arr[counters[_ki]]; vars[${py(fe.indexVar || "i")}] = JsonSerializer.SerializeToElement(counters[_ki]); counters[_ki]++;`);
                 L.push(`${I}        vars[${py(fe.itemVar)}] = _it; last = _it;`);
-                L.push(`${I}        node = ${body ? py(body) : '""'};`);
+                L.push(`${I}        node = ${body ? py(body) : "null"};`);
                 L.push(`${I}    }`);
                 L.push(`${I}}`);
             } else if (lang === "go") {
                 L.push(`${I}{ _arr, _ := getPath(${py(fe.source)}).([]interface{}); _ki := ${py(node.id + "_fi")}`);
-                L.push(`${I}if _arr == nil || counters[_ki] >= len(_arr) { counters[_ki] = 0; node = ${done ? py(done) : '""'} } else {`);
-                L.push(`${I}\tit := _arr[counters[_ki]]; counters[_ki]++; ctx.Vars[${py(fe.itemVar)}] = it; ctx.Last = it`);
-                L.push(`${I}\tnode = ${body ? py(body) : '""'} }`);
+                L.push(`${I}if _arr == nil || counters[_ki] >= len(_arr) { counters[_ki] = 0; node = ${done ? py(done) : "null"} } else {`);
+                L.push(`${I}\tit := _arr[counters[_ki]]; ctx.Vars[${py(fe.indexVar || "i")}] = counters[_ki]; counters[_ki]++; ctx.Vars[${py(fe.itemVar)}] = it; ctx.Last = it`);
+                L.push(`${I}\tnode = ${body ? py(body) : "null"} }`);
             }
             return true;
         }
@@ -1545,7 +1631,7 @@
                 L.push(`${I}try {`);
                 L.push(`${I}  const _id = getPath(context, ${py(c.itemPath)}) ?? resolve(${py(c.itemPath)});`);
                 L.push(`${I}  const _r = await axios.get(\`https://prod-api.lzt.market/\${_id}\`, { headers: HEADERS });`);
-                L.push(`${I}  const _item = _r.data.item || _r.data; const _sold = _item.item_state === 'paid' || _item.is_sold;`);
+                L.push(`${I}  const _item = _r.data.item || _r.data; const _sold = _item.item_state === 'paid' || _item.item_state === 'deleted' || !!_item.is_sold;`);
                 L.push(`${I}  const _ok = !!_item.item_id && ${c.rejectSold !== false ? "!_sold" : "true"};`);
                 L.push(`${I}  node = _ok ? ${okP ? py(okP) : "null"} : ${failP ? py(failP) : "null"};`);
                 L.push(`${I}} catch (e) { node = ${failP ? py(failP) : "null"}; }`);
@@ -1572,17 +1658,17 @@
                 L.push(`${I}    var text = await resp.Content.ReadAsStringAsync();`);
                 L.push(`${I}    JsonElement _j; try { _j = JsonSerializer.Deserialize<JsonElement>(text); } catch { _j = default; }`);
                 L.push(`${I}  JsonElement _item = _j; if (_j.ValueKind == JsonValueKind.Object && _j.TryGetProperty("item", out var _it)) _item = _it;`);
-                L.push(`${I}    var _sold = _item.TryGetProperty("item_state", out var _st) && (_st.GetString() == "paid" || _st.GetString() == "deleted");`);
+                L.push(`${I}    var _sold = (_item.TryGetProperty("item_state", out var _st) && (_st.GetString() == "paid" || _st.GetString() == "deleted")) || (_item.TryGetProperty("is_sold", out var _is) && _is.ValueKind == JsonValueKind.True);`);
                 L.push(`${I}    var _ok = _item.TryGetProperty("item_id", out _) && ${c.rejectSold !== false ? "!_sold" : "true"};`);
-                L.push(`${I}    node = _ok ? ${okP ? py(okP) : '""'} : ${failP ? py(failP) : '""'};`);
+                L.push(`${I}    node = _ok ? ${okP ? py(okP) : "null"} : ${failP ? py(failP) : "null"};`);
                 L.push(`${I}}`);
             } else if (lang === "go") {
                 L.push(`${I}{ _id := fmt.Sprint(getPath(${py(c.itemPath)})); if _id == "" { _id = resolve(${py(c.itemPath)}) }`);
                 L.push(`${I}code, data := apiCall("GET", "https://prod-api.lzt.market/"+_id, nil, nil)`);
                 L.push(`${I}var item map[string]interface{}; if data != nil { if it, ok := data["item"].(map[string]interface{}); ok { item = it } else { item = data } }`);
-                L.push(`${I}st, _ := item["item_state"].(string); sold := st == "paid" || st == "deleted"; _, hasId := item["item_id"]`);
+                L.push(`${I}st, _ := item["item_state"].(string); soldFlag, _ := item["is_sold"].(bool); sold := st == "paid" || st == "deleted" || soldFlag; _, hasId := item["item_id"]`);
                 L.push(`${I}ok := hasId && ${c.rejectSold !== false ? "!sold" : "true"} && code < 400`);
-                L.push(`${I}if ok { node = ${okP ? py(okP) : '""'} } else { node = ${failP ? py(failP) : '""'} } }`);
+                L.push(`${I}if ok { node = ${okP ? py(okP) : "null"} } else { node = ${failP ? py(failP) : "null"} } }`);
             } else {
                 L.push(`${I}# Checker: GET /{item_id}`);
                 L.push(`${I}node = ${okP ? py(okP) : (lang === "go" ? '""' : "None")};`);
@@ -1592,143 +1678,190 @@
 
         if (node.type === "sniper") {
             const sn = node.sniper;
-            const bought = et("bought"), skip = et("skip");
+            const bought = et("bought"), skip = et("skip"), fail = et("fail");
+            const skipN = skip ? py(skip) : null;
+            const failN = fail ? py(fail) : skipN;
             if (lang === "py") {
                 L.push(`${I}context['vars'].setdefault('_lzt_spend', 0)`);
                 L.push(`${I}_items = get_path(context, ${py(sn.source)}) or []`);
-                L.push(`${I}_maxp = float(resolve(${py(String(sn.maxPrice))}) or 1e18)`);
-                L.push(`${I}_maxs = float(resolve(${py(String(sn.maxSpend))}) or 1e18)`);
-                L.push(`${I}node = ${skip ? py(skip) : "None"}; _bought = False`);
+                L.push(`${I}_rawp = resolve(${py(String(sn.maxPrice))}); _raws = resolve(${py(String(sn.maxSpend))})`);
+                L.push(`${I}_maxp = float(_rawp) if str(_rawp).strip() != '' else float('inf')`);
+                L.push(`${I}_maxs = float(_raws) if str(_raws).strip() != '' else float('inf')`);
+                L.push(`${I}node = ${skipN || "None"}; _bought = False`);
                 L.push(`${I}for _it in (_items if isinstance(_items, list) else []):`);
                 L.push(`${I}    _price = float(_it.get(${py(sn.priceField || "price")}, 0) or 0)`);
                 L.push(`${I}    _iid = _it.get(${py(sn.itemField || "item_id")})`);
                 L.push(`${I}    if not _iid or _price > _maxp or context['vars']['_lzt_spend'] + _price > _maxs: continue`);
-                L.push(`${I}    _br = do_request('POST', f"https://prod-api.lzt.market/{_iid}/fast-buy")`);
-                L.push(`${I}    if _br.ok: context['vars']['_lzt_spend'] += _price; node = ${bought ? py(bought) : "None"}; _bought = True; break`);
+                L.push(`${I}    try:`);
+                L.push(`${I}        _br = do_request('POST', f"https://prod-api.lzt.market/{_iid}/fast-buy", params={"price": _price})`);
+                L.push(`${I}        try: _bj = _br.json() if _br.ok else {}`);
+                L.push(`${I}        except: _bj = {}`);
+                L.push(`${I}        _bok = _br.ok and not (_bj.get('errors') or _bj.get('error'))`);
+                L.push(`${I}        if _bok: context['vars']['_lzt_spend'] += _price; node = ${bought ? py(bought) : "None"}; _bought = True; break`);
+                L.push(`${I}        node = ${failN || "None"}; break`);
+                L.push(`${I}    except Exception:`);
+                L.push(`${I}        node = ${failN || "None"}; break`);
             } else if (lang === "pyasync") {
                 L.push(`${I}context['vars'].setdefault('_lzt_spend', 0)`);
                 L.push(`${I}_items = get_path(context, ${py(sn.source)}) or []`);
-                L.push(`${I}_maxp = float(resolve(${py(String(sn.maxPrice))}) or 1e18)`);
-                L.push(`${I}_maxs = float(resolve(${py(String(sn.maxSpend))}) or 1e18)`);
-                L.push(`${I}node = ${skip ? py(skip) : "None"}; _bought = False`);
+                L.push(`${I}_rawp = resolve(${py(String(sn.maxPrice))}); _raws = resolve(${py(String(sn.maxSpend))})`);
+                L.push(`${I}_maxp = float(_rawp) if str(_rawp).strip() != '' else float('inf')`);
+                L.push(`${I}_maxs = float(_raws) if str(_raws).strip() != '' else float('inf')`);
+                L.push(`${I}node = ${skipN || "None"}; _bought = False`);
                 L.push(`${I}for _it in (_items if isinstance(_items, list) else []):`);
                 L.push(`${I}    _price = float(_it.get(${py(sn.priceField || "price")}, 0) or 0)`);
                 L.push(`${I}    _iid = _it.get(${py(sn.itemField || "item_id")})`);
                 L.push(`${I}    if not _iid or _price > _maxp or context['vars']['_lzt_spend'] + _price > _maxs: continue`);
-                L.push(`${I}    async with session.post(f"https://prod-api.lzt.market/{_iid}/fast-buy", proxy=cur_proxy()) as _br:`);
-                L.push(`${I}        if _br.status < 400: context['vars']['_lzt_spend'] += _price; node = ${bought ? py(bought) : "None"}; _bought = True; break`);
+                L.push(`${I}    try:`);
+                L.push(`${I}        async with session.post(f"https://prod-api.lzt.market/{_iid}/fast-buy", params={"price": str(_price)}, proxy=cur_proxy()) as _br:`);
+                L.push(`${I}            try: _bj = await _br.json(content_type=None) if _br.status < 400 else {}`);
+                L.push(`${I}            except: _bj = {}`);
+                L.push(`${I}            _bok = _br.status < 400 and not (_bj.get('errors') or _bj.get('error'))`);
+                L.push(`${I}            if _bok: context['vars']['_lzt_spend'] += _price; node = ${bought ? py(bought) : "None"}; _bought = True; break`);
+                L.push(`${I}            node = ${failN || "None"}; break`);
+                L.push(`${I}    except Exception:`);
+                L.push(`${I}        node = ${failN || "None"}; break`);
             } else if (lang === "node") {
                 L.push(`${I}context.vars._lzt_spend = context.vars._lzt_spend || 0;`);
                 L.push(`${I}const _items = getPath(context, ${py(sn.source)}) || []; let _b = false;`);
+                L.push(`${I}const _rp = resolve(String(${py(String(sn.maxPrice))})); const _rs = resolve(String(${py(String(sn.maxSpend))}));`);
+                L.push(`${I}const _maxp = _rp === "" || isNaN(parseFloat(_rp)) ? Infinity : parseFloat(_rp);`);
+                L.push(`${I}const _maxs = _rs === "" || isNaN(parseFloat(_rs)) ? Infinity : parseFloat(_rs);`);
+                L.push(`${I}node = ${skipN || "null"};`);
                 L.push(`${I}for (const _it of _items) {`);
                 L.push(`${I}  const _p = parseFloat(_it[${py(sn.priceField || "price")}] || 0);`);
                 L.push(`${I}  const _id = _it[${py(sn.itemField || "item_id")}];`);
-                L.push(`${I}  if (!_id || _p > parseFloat(${py(String(sn.maxPrice))})) continue;`);
-                L.push(`${I}  try { await axios.post(\`https://prod-api.lzt.market/\${_id}/fast-buy\`, {}, { headers: HEADERS }); context.vars._lzt_spend += _p; node = ${bought ? py(bought) : "null"}; _b = true; break; } catch(e) {}`);
+                L.push(`${I}  if (!_id || _p > _maxp || context.vars._lzt_spend + _p > _maxs) continue;`);
+                L.push(`${I}  try { const _rr = await axios.post(\`https://prod-api.lzt.market/\${_id}/fast-buy\`, {}, { params: { price: _p }, headers: HEADERS }); const _d = _rr.data || {}; if (_rr.status < 400 && !(_d.errors && _d.errors.length) && !_d.error) { context.vars._lzt_spend += _p; node = ${bought ? py(bought) : "null"}; _b = true; break; } node = ${failN || "null"}; break; }`);
+                L.push(`${I}  catch(e) { node = ${failN || "null"}; break; }`);
                 L.push(`${I}}`);
-                L.push(`${I}if (!_b) node = ${skip ? py(skip) : "null"};`);
+                L.push(`${I}if (!_b && node === ${skipN || "null"}) node = ${skipN || "null"};`);
             } else if (lang === "bash") {
                 L.push(`${I}VARS[_lzt_spend]=${"${VARS[_lzt_spend]:-0}"}`);
                 L.push(`${I}_items=$(get_path ${py(sn.source)})`);
-                L.push(`${I}node=${skip ? py(skip) : '""'}; _bought=0`);
+                L.push(`${I}_maxp=$(resolve ${py(String(sn.maxPrice))}); _maxs=$(resolve ${py(String(sn.maxSpend))})`);
+                L.push(`${I}[[ -z "$_maxp" ]] && _maxp=1e18; [[ -z "$_maxs" ]] && _maxs=1e18`);
+                L.push(`${I}node=${skipN || '""'}; _bought=0`);
                 L.push(`${I}_len=$(echo "$_items" | jq 'if type=="array" then length else 0 end' 2>/dev/null || echo 0)`);
                 L.push(`${I}for ((i=0; i<_len; i++)); do`);
                 L.push(`${I}  _iid=$(echo "$_items" | jq -r ".[$i].${sn.itemField || "item_id"} // empty")`);
                 L.push(`${I}  _price=$(echo "$_items" | jq -r ".[$i].${sn.priceField || "price"} // 0")`);
                 L.push(`${I}  [[ -z "$_iid" || "$_iid" == "null" ]] && continue`);
-                L.push(`${I}  _code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "$AUTH" "https://prod-api.lzt.market/\${_iid}/fast-buy")`);
-                L.push(`${I}  if [[ "$_code" -lt 400 ]]; then VARS[_lzt_spend]=$((${"${VARS[_lzt_spend]:-0}"} + \${_price:-0})); node=${bought ? py(bought) : '""'}; _bought=1; break; fi`);
+                L.push(`${I}  awk -v p="$_price" -v m="$_maxp" 'BEGIN{exit !(p+0>m+0)}' && continue`);
+                L.push(`${I}  awk -v s="${"${VARS[_lzt_spend]:-0}"}" -v p="$_price" -v m="$_maxs" 'BEGIN{exit !(s+0+p+0>m+0)}' && continue`);
+                L.push(`${I}  _code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "$AUTH" "https://prod-api.lzt.market/\${_iid}/fast-buy?price=\${_price}")`);
+                L.push(`${I}  if [[ "$_code" -lt 400 ]]; then VARS[_lzt_spend]=$(awk -v s="${"${VARS[_lzt_spend]:-0}"}" -v p="$_price" 'BEGIN{print s+p}'); node=${bought ? py(bought) : '""'}; _bought=1; break;`);
+                L.push(`${I}  else node=${failN || skipN || '""'}; break; fi`);
                 L.push(`${I}done`);
             } else if (lang === "php") {
                 L.push(`${I}if (!isset($context['vars']['_lzt_spend'])) $context['vars']['_lzt_spend'] = 0;`);
-                L.push(`${I}$items = get_path($context, ${py(sn.source)}) ?: []; $node = ${skip ? py(skip) : "null"}; $bought = false;`);
+                L.push(`${I}$items = get_path($context, ${py(sn.source)}) ?: []; $node = ${skipN || "null"}; $bought = false;`);
+                L.push(`${I}$_rp = trim(strval(resolve_val(${py(String(sn.maxPrice))}))); $_rs = trim(strval(resolve_val(${py(String(sn.maxSpend))})));`);
+                L.push(`${I}$_maxp = $_rp === '' ? INF : floatval($_rp); $_maxs = $_rs === '' ? INF : floatval($_rs);`);
                 L.push(`${I}foreach ((array)$items as $_it) {`);
                 L.push(`${I}  $price = floatval($_it[${py(sn.priceField || "price")}] ?? 0); $iid = $_it[${py(sn.itemField || "item_id")}] ?? null;`);
-                L.push(`${I}  if (!$iid || $price > floatval(resolve_val(${py(String(sn.maxPrice))}))) continue;`);
-                L.push(`${I}  $br = api_call('POST', "https://prod-api.lzt.market/{$iid}/fast-buy", null, null, $TOKEN);`);
-                L.push(`${I}  if ($br['code'] < 400) { $context['vars']['_lzt_spend'] += $price; $node = ${bought ? py(bought) : "null"}; $bought = true; break; }`);
+                L.push(`${I}  if (!$iid || $price > $_maxp || $context['vars']['_lzt_spend'] + $price > $_maxs) continue;`);
+                L.push(`${I}  $br = api_call('POST', "https://prod-api.lzt.market/{$iid}/fast-buy", ['price' => (string)$price], null, $TOKEN);`);
+                L.push(`${I}  $_bd = is_array($br['data'] ?? null) ? $br['data'] : [];`);
+                L.push(`${I}  $_bok = (($br['code'] ?? 0) < 400) && empty($_bd['errors']) && empty($_bd['error']);`);
+                L.push(`${I}  if ($_bok) { $context['vars']['_lzt_spend'] += $price; $node = ${bought ? py(bought) : "null"}; $bought = true; break; }`);
+                L.push(`${I}  $node = ${failN || "null"}; break;`);
                 L.push(`${I}}`);
             } else if (lang === "csharp") {
                 L.push(`${I}{`);
-                L.push(`${I}    if (!vars.ContainsKey("_lzt_spend")) vars["_lzt_spend"] = JsonSerializer.SerializeToElement(0);`);
-                L.push(`${I}    var _items = GetPathArray(${py(sn.source)}); node = ${skip ? py(skip) : '""'}; var _b = false;`);
+                L.push(`${I}    double _spend = 0; if (vars.ContainsKey("_lzt_spend")) double.TryParse(vars["_lzt_spend"].ToString(), out _spend);`);
+                L.push(`${I}    var _rp = Resolve(${py(String(sn.maxPrice))}); var _rs = Resolve(${py(String(sn.maxSpend))});`);
+                L.push(`${I}    double _maxp = string.IsNullOrWhiteSpace(_rp) ? double.PositiveInfinity : (double.TryParse(_rp, out var __mp) ? __mp : double.PositiveInfinity);`);
+                L.push(`${I}    double _maxs = string.IsNullOrWhiteSpace(_rs) ? double.PositiveInfinity : (double.TryParse(_rs, out var __ms) ? __ms : double.PositiveInfinity);`);
+                L.push(`${I}var _items = GetPathArray(${py(sn.source)}); node = ${skipN || "null"}; var _b = false;`);
                 L.push(`${I}    foreach (var _it in _items) {`);
                 L.push(`${I}        if (_it.ValueKind != JsonValueKind.Object) continue;`);
                 L.push(`${I}        var _iid = _it.TryGetProperty(${py(sn.itemField || "item_id")}, out var _idp) ? _idp.ToString() : "";`);
                 L.push(`${I}        double _price = 0; if (_it.TryGetProperty(${py(sn.priceField || "price")}, out var _pp)) double.TryParse(_pp.ToString(), out _price);`);
-                L.push(`${I}        if (string.IsNullOrEmpty(_iid)) continue;`);
-                L.push(`${I}        var _br = await http.PostAsync($"https://prod-api.lzt.market/{_iid}/fast-buy", null);`);
-                L.push(`${I}        if (_br.IsSuccessStatusCode) { node = ${bought ? py(bought) : '""'}; _b = true; break; }`);
+                L.push(`${I}        if (string.IsNullOrEmpty(_iid) || _price > _maxp || _spend + _price > _maxs) continue;`);
+                L.push(`${I}        var _br = await http.PostAsync($"https://prod-api.lzt.market/{_iid}/fast-buy?price={_price}", null);`);
+                L.push(`${I}        var _bt = await _br.Content.ReadAsStringAsync(); JsonElement _bd = default; try { _bd = JsonSerializer.Deserialize<JsonElement>(_bt); } catch { }`);
+                L.push(`${I}        bool _bok = _br.IsSuccessStatusCode && !(_bd.ValueKind == JsonValueKind.Object && ((_bd.TryGetProperty("errors", out var _be) && _be.ValueKind == JsonValueKind.Array && _be.GetArrayLength() > 0) || _bd.TryGetProperty("error", out _)));`);
+                L.push(`${I}        if (_bok) { _spend += _price; vars["_lzt_spend"] = JsonSerializer.SerializeToElement(_spend); node = ${bought ? py(bought) : "null"}; _b = true; break; }`);
+                L.push(`${I}        node = ${failN || "null"}; break;`);
                 L.push(`${I}    }`);
                 L.push(`${I}}`);
             } else if (lang === "go") {
                 L.push(`${I}{ if _, ok := ctx.Vars["_lzt_spend"]; !ok { ctx.Vars["_lzt_spend"] = 0.0 }`);
-                L.push(`${I}items, _ := getPath(${py(sn.source)}).([]interface{}); node = ${skip ? py(skip) : '""'}; bought := false`);
+                L.push(`${I}items, _ := getPath(${py(sn.source)}).([]interface{}); node = ${skipN || "null"}; bought := false`);
+                L.push(`${I}_rawp := strings.TrimSpace(resolve(${py(String(sn.maxPrice))})); _raws := strings.TrimSpace(resolve(${py(String(sn.maxSpend))}))`);
+                L.push(`${I}_maxp := 1e18; if _rawp != "" { _maxp = toFloat(_rawp) }`);
+                L.push(`${I}_maxs := 1e18; if _raws != "" { _maxs = toFloat(_raws) }`);
                 L.push(`${I}for _, it := range items { x, ok := it.(map[string]interface{}); if !ok { continue }`);
                 L.push(`${I}  iid := fmt.Sprint(x[${py(sn.itemField || "item_id")}]); price := toFloat(x[${py(sn.priceField || "price")}])`);
-                L.push(`${I}  if iid == "" || iid == "<nil>" { continue }`);
-                L.push(`${I}  code, _ := apiCall("POST", "https://prod-api.lzt.market/"+iid+"/fast-buy", nil, nil)`);
-                L.push(`${I}  if code < 400 { ctx.Vars["_lzt_spend"] = toFloat(ctx.Vars["_lzt_spend"]) + price; node = ${bought ? py(bought) : '""'}; bought = true; break }`);
+                L.push(`${I}  if iid == "" || iid == "<nil>" || price > _maxp || toFloat(ctx.Vars["_lzt_spend"])+price > _maxs { continue }`);
+                L.push(`${I}  code, data := apiCall("POST", "https://prod-api.lzt.market/"+iid+"/fast-buy", map[string]string{"price": fmt.Sprint(price)}, nil)`);
+                L.push(`${I}  _, hasErr := data["error"]; errs, _ := data["errors"].([]interface{}); bok := code > 0 && code < 400 && !hasErr && len(errs) == 0`);
+                L.push(`${I}  if bok { ctx.Vars["_lzt_spend"] = toFloat(ctx.Vars["_lzt_spend"]) + price; node = ${bought ? py(bought) : "null"}; bought = true; break }`);
+                L.push(`${I}  node = ${failN || "null"}; break`);
                 L.push(`${I}} }`);
             } else {
-                L.push(`${I}# Sniper: fast-buy first match`);
-                L.push(`${I}node = ${skip ? py(skip) : (lang === "go" ? '""' : "None")};`);
+                L.push(`${I}raise Exception("sniper unsupported")`);
+            }
+            return true;
+        }
+
+        if (node.type === "script") {
+            const s = node.script || {};
+            if (lang === "py" || lang === "pyasync") {
+                L.push(`${I}raise NotImplementedError("Блок «Скрипт» (${s.filename || "hook.py"}) — только в LZT API Constructor")`);
+            } else if (lang === "node") {
+                L.push(`${I}throw new Error("Script hook — только в конструкторе");`);
+            } else if (lang === "php") {
+                L.push(`${I}throw new Exception("Блок Скрипт — только в конструкторе");`);
+            } else if (lang === "bash") {
+                L.push(`${I}echo "Script hook — только в конструкторе" >&2; exit 1`);
+            } else if (lang === "csharp") {
+                L.push(`${I}throw new NotImplementedException("Script hook — only in Constructor");`);
+            } else if (lang === "go") {
+                L.push(`${I}panic("script hook — only in Constructor")`);
+            } else {
+                L.push(`${I}raise Exception("script hook")`);
             }
             return true;
         }
 
         if (node.type === "ai") {
             const a = node.ai || {};
-            const okP = et("success"), errP = et("error");
-            const prompt = (a.prompt || "Оцени лоты").slice(0, 80);
             if (lang === "py" || lang === "pyasync") {
-                L.push(`${I}# ИИ: ${prompt}… → vars.${a.outputVar || "ai_result"}`);
-                L.push(`${I}# Вызов OpenAI-совместимого API — ключ из env OPENAI_API_KEY`);
-                L.push(`${I}_batch = get_path(context, ${py(a.source || "last.items")}) or []`);
-                L.push(`${I}# … POST /chat/completions с JSON лотов`);
-                L.push(`${I}node = ${okP ? py(okP) : "None"}`);
+                L.push(`${I}raise NotImplementedError("Блок «ИИ» (vars.${a.outputVar || "ai_result"}): запускайте в конструкторе или вызовите API вручную")`);
             } else if (lang === "node") {
-                L.push(`${I}// ИИ batch: ${a.source || "last.items"} → ${a.outputVar || "ai_result"}`);
-                L.push(`${I}node = ${okP ? py(okP) : "null"};`);
+                L.push(`${I}throw new Error("AI block — только в конструкторе / свой API-вызов");`);
+            } else if (lang === "php") {
+                L.push(`${I}throw new Exception("Блок ИИ — только в конструкторе");`);
             } else if (lang === "bash") {
-                L.push(`${I}# ИИ: ${prompt}… → vars.${a.outputVar || "ai_result"} (OPENAI_API_KEY)`);
-                L.push(`${I}_batch=$(get_path ${py(a.source || "last.items")})`);
-                L.push(`${I}# POST /v1/chat/completions с JSON лотов`);
-                L.push(`${I}node=${okP ? py(okP) : '""'}`);
+                L.push(`${I}echo "AI block — только в конструкторе" >&2; exit 1`);
             } else if (lang === "csharp") {
-                L.push(`${I}// ИИ: ${prompt}… → vars.${a.outputVar || "ai_result"} (OPENAI_API_KEY)`);
-                L.push(`${I}var _batch = GetPathArray(${py(a.source || "last.items")});`);
-                L.push(`${I}// POST /v1/chat/completions`);
-                L.push(`${I}node = ${okP ? py(okP) : '""'};`);
+                L.push(`${I}throw new NotImplementedException("AI block — only in Constructor");`);
             } else if (lang === "go") {
-                L.push(`${I}// ИИ: ${prompt}… → vars.${a.outputVar || "ai_result"} (OPENAI_API_KEY)`);
-                L.push(`${I}_ := getPath(${py(a.source || "last.items")})`);
-                L.push(`${I}node = ${okP ? py(okP) : '""'}`);
+                L.push(`${I}panic("AI block — only in Constructor")`);
             } else {
-                L.push(`${I}# AI block → ${a.outputVar || "ai_result"}`);
-                L.push(`${I}node = ${okP ? py(okP) : (lang === "go" ? '""' : "None")};`);
+                L.push(`${I}raise Exception("ai block")`);
             }
             return true;
         }
 
         if (node.type === "subscenario") {
-            const nx = et("out");
             const ss = node.subscenario;
-            if (lang === "node") {
-                L.push(`${I}// Под-сценарий (templateId: ${ss.templateId || "?"}) — вставьте JSON из scenario.json`);
-                L.push(`${I}node = ${nx ? py(nx) : "null"};`);
+            if (lang === "py" || lang === "pyasync") {
+                L.push(`${I}raise NotImplementedError("Под-сценарий ${ss.templateId || "?"}: вставьте логику из scenario.json вручную")`);
+            } else if (lang === "node") {
+                L.push(`${I}throw new Error("Sub-scenario — вставьте nested graph вручную");`);
+            } else if (lang === "php") {
+                L.push(`${I}throw new Exception("Под-сценарий не экспортируется автоматически");`);
             } else if (lang === "bash") {
-                L.push(`${I}# Под-сценарий (templateId: ${ss.templateId || "?"}) — загрузите scenario.json и выполните вложенный граф`);
-                L.push(`${I}node=${nx ? py(nx) : '""'}`);
+                L.push(`${I}echo "subscenario — не экспортируется" >&2; exit 1`);
             } else if (lang === "csharp") {
-                L.push(`${I}// Под-сценарий (templateId: ${ss.templateId || "?"}) — вставьте вызов или JSON`);
-                L.push(`${I}node = ${nx ? py(nx) : '""'};`);
+                L.push(`${I}throw new NotImplementedException("Sub-scenario not exported");`);
             } else if (lang === "go") {
-                L.push(`${I}// Под-сценарий (templateId: ${ss.templateId || "?"}) — вставьте JSON или вызов функции`);
-                L.push(`${I}node = ${nx ? py(nx) : '""'}`);
+                L.push(`${I}panic("subscenario not exported")`);
             } else {
-                L.push(`${I}# Под-сценарий (templateId: ${ss.templateId || "?"}) — вставьте JSON или вызовите функцию`);
-                L.push(`${I}node = ${nx ? py(nx) : "None"};`);
+                L.push(`${I}raise Exception("subscenario")`);
             }
             return true;
         }
@@ -1755,7 +1888,7 @@
                 }
             });
             notes.push("");
-            notes.push("# Уведомления — HTTP через requests (отдельные python-telegram-bot / discord.py не нужны):");
+            notes.push("# Уведомления через HTTP (requests), без отдельных telegram/discord библиотек:");
             if (channels.has("telegram")) {
                 notes.push("#   Telegram: Bot API POST …/bot<TOKEN>/sendMessage (chat_id + text)");
             }

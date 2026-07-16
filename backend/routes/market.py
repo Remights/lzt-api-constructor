@@ -46,7 +46,7 @@ def check_proxies_endpoint(payload: ProxyCheckPayload):
     ok, reason = is_safe_url(payload.test_url)
     if not ok:
         return {"success": False, "error": f"Небезопасный тестовый URL: {reason}"}
-    return check_proxies(payload.proxies, payload.test_url, payload.timeout)
+    return check_proxies(payload.proxies, payload.test_url, min(max(payload.timeout or 8, 1), 120))
 
 
 @router.post("/api/open-browser")

@@ -17,6 +17,7 @@ window.ScenarioConstants = {
         checker:   { title: "Проверка аккаунта", icon: "fa-user-check", color: "#2980b9", ins: [{ id: "in" }],   outs: [{ id: "ok", label: "OK" }, { id: "fail", label: "Битый" }] },
         sniper:    { title: "Снайпер",  icon: "fa-crosshairs",      color: "#c0392b", ins: [{ id: "in" }],          outs: [{ id: "bought", label: "Купил" }, { id: "skip", label: "Пропуск" }, { id: "fail", label: "Ошибка" }] },
         ai:        { title: "ИИ",       icon: "fa-brain",           color: "#9b59b6", ins: [{ id: "in" }],          outs: [{ id: "success", label: "Успех" }, { id: "error", label: "Ошибка" }] },
+        script:    { title: "Скрипт",   icon: "fa-puzzle-piece",    color: "#e67e22", ins: [{ id: "in" }],          outs: [{ id: "success", label: "Успех" }, { id: "error", label: "Ошибка" }] },
         subscenario: { title: "Под-сценарий", icon: "fa-layer-group", color: "#34495e", ins: [{ id: "in" }],      outs: [{ id: "out", label: "" }] },
     },
     OP_LABELS: { ">": "больше", "<": "меньше", ">=": "≥", "<=": "≤", "==": "равно", "!=": "не равно", "exists": "существует" },

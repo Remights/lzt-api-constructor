@@ -30,16 +30,17 @@
     function j(obj, indent) {
         return JSON.stringify(obj || {}, null, indent);
     }
-    const isWrite = (m) => ["POST", "PUT"].includes(m.toUpperCase());
+    const isWrite = (m) => ["POST", "PUT", "PATCH"].includes(m.toUpperCase());
+    function pyStr(s) { return JSON.stringify(String(s ?? "")); }
 
     // ---------- генераторы одиночного запроса ----------
     function pythonRequests(url, method, params, headers, body) {
         const ps = params && Object.keys(params).length ? j(params, 4) : "{}";
         const hs = headers && Object.keys(headers).length ? j(headers, 4) : "{}";
-        let code = `import requests\n\nurl = "${url}"\nheaders = ${hs}\nparams = ${ps}\n`;
+        let code = `import requests\n\nurl = ${pyStr(url)}\nheaders = ${hs}\nparams = ${ps}\n`;
         if (isWrite(method) && body) {
             code += `data = ${j(body, 4)}\n`;
-            code += `\nresponse = requests.${method.toLowerCase()}(url, headers=headers, params=params, data=data)\n`;
+            code += `\nresponse = requests.${method.toLowerCase()}(url, headers=headers, params=params, json=data)\n`;
         } else {
             code += `\nresponse = requests.${method.toLowerCase()}(url, headers=headers, params=params)\n`;
         }
@@ -55,7 +56,7 @@
         });
         const ps = Object.keys(sp).length ? j(sp, 8).replace("{\n", "{\n    ") : "{}";
         const hs = headers && Object.keys(headers).length ? j(headers, 8).replace("{\n", "{\n    ") : "{}";
-        let code = `import aiohttp\nimport asyncio\n\nasync def make_request():\n    url = "${url}"\n    headers = ${hs}\n    params = ${ps}\n`;
+        let code = `import aiohttp\nimport asyncio\n\nasync def make_request():\n    url = ${pyStr(url)}\n    headers = ${hs}\n    params = ${ps}\n`;
         let call = `session.${method.toLowerCase()}(url, headers=headers, params=params`;
         if (isWrite(method) && body) {
             code += `    data = ${j(body, 8).replace("{\n", "{\n    ")}\n`;
@@ -69,7 +70,7 @@
 
     function jsFetch(url, method, params, headers, body) {
         const hs = headers && Object.keys(headers).length ? j(headers, 4) : "{}";
-        let code = `const url = new URL("${url}");\n`;
+        let code = `const url = new URL(${JSON.stringify(url)});\n`;
         if (params && Object.keys(params).length) {
             code += `const params = ${j(params, 4)};\nObject.entries(params).forEach(([key, value]) => {\n    if (Array.isArray(value)) {\n        value.forEach(v => url.searchParams.append(key, v));\n    } else {\n        url.searchParams.append(key, value);\n    }\n});\n`;
         }
@@ -82,7 +83,7 @@
     function jsAxios(url, method, params, headers, body) {
         const hs = headers && Object.keys(headers).length ? j(headers, 4) : "{}";
         const fu = fullUrl(url, params);
-        let code = `const axios = require('axios');\n\nconst url = "${fu}";\nconst headers = ${hs};\n`;
+        let code = `const axios = require('axios');\n\nconst url = ${JSON.stringify(fu)};\nconst headers = ${hs};\n`;
         if (isWrite(method)) {
             if (body) {
                 code += `const data = ${j(body, 4)};\n`;
@@ -99,13 +100,14 @@
 
     function curl(url, method, params, headers, body) {
         const fu = fullUrl(url, params);
-        const lines = [`curl -X ${method.toUpperCase()} "${fu}"`];
+        const esc = (s) => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        const lines = [`curl -X ${method.toUpperCase()} "${esc(fu)}"`];
         const hasAccept = Object.keys(headers || {}).some(k => k.toLowerCase() === "accept");
-        Object.keys(headers || {}).forEach(k => lines.push(`  -H "${k}: ${headers[k]}"`));
+        Object.keys(headers || {}).forEach(k => lines.push(`  -H "${esc(k)}: ${esc(headers[k])}"`));
         if (!hasAccept) lines.push('  -H "Accept: application/json"');
         if (isWrite(method) && body) {
             lines.push('  -H "Content-Type: application/json"');
-            lines.push(`  -d '${JSON.stringify(body)}'`);
+            lines.push(`  -d ${JSON.stringify(JSON.stringify(body))}`);
         }
         return lines.join(" \\\n") + "\n";
     }
@@ -118,7 +120,7 @@
             const bj = JSON.stringify(body).replace(/"/g, '\\"');
             bodyBlock = `        request.Content = new StringContent("${bj}", Encoding.UTF8, "application/json");\n`;
         }
-        return `using System;\nusing System.Net.Http;\nusing System.Net.Http.Headers;\nusing System.Text;\nusing System.Threading.Tasks;\n\nclass Program {\n    static async Task Main() {\n        using var client = new HttpClient();\n        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "${token}");\n        client.DefaultRequestHeaders.Add("User-Agent", "LZT-API-Constructor");\n\n        var request = new HttpRequestMessage(new HttpMethod("${method.toUpperCase()}"), "${fu}");\n${bodyBlock}\n        HttpResponseMessage response = await client.SendAsync(request);\n        string result = await response.Content.ReadAsStringAsync();\n        Console.WriteLine($"Status: {response.StatusCode}\\nResult: {result}");\n    }\n}\n`;
+        return `using System;\nusing System.Net.Http;\nusing System.Net.Http.Headers;\nusing System.Text;\nusing System.Threading.Tasks;\n\nclass Program {\n    static async Task Main() {\n        using var client = new HttpClient();\n        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ${JSON.stringify(token)});\n        client.DefaultRequestHeaders.Add("User-Agent", "LZT-API-Constructor");\n\n        var request = new HttpRequestMessage(new HttpMethod(${JSON.stringify(method.toUpperCase())}), ${JSON.stringify(fu)});\n${bodyBlock}\n        HttpResponseMessage response = await client.SendAsync(request);\n        string result = await response.Content.ReadAsStringAsync();\n        Console.WriteLine($"Status: {response.StatusCode}\\nResult: {result}");\n    }\n}\n`;
     }
 
     function php(url, method, params, headers, body) {
@@ -126,11 +128,11 @@
         const fu = fullUrl(url, params);
         let bodyBlock = "", contentType = "";
         if (isWrite(method) && body) {
-            const bj = JSON.stringify(body).replace(/'/g, "\\'");
+            const bj = JSON.stringify(body).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
             bodyBlock = `curl_setopt($ch, CURLOPT_POSTFIELDS, '${bj}');\n`;
             contentType = '    "Content-Type: application/json",\n';
         }
-        return `<?php\n$url = "${fu}";\n$ch = curl_init($url);\n\ncurl_setopt($ch, CURLOPT_RETURNTRANSFER, true);\ncurl_setopt($ch, CURLOPT_CUSTOMREQUEST, "${method.toUpperCase()}");\n${bodyBlock}curl_setopt($ch, CURLOPT_HTTPHEADER, [\n    "Authorization: Bearer ${token}",\n${contentType}    "Accept: application/json"\n]);\n\n$response = curl_exec($ch);\n$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);\ncurl_close($ch);\n\nif ($httpCode === 200) {\n    echo "Успешно: " . $response;\n} else {\n    echo "Ошибка ($httpCode): " . $response;\n}\n?>\n`;
+        return `<?php\n$url = ${JSON.stringify(fu)};\n$ch = curl_init($url);\n\ncurl_setopt($ch, CURLOPT_RETURNTRANSFER, true);\ncurl_setopt($ch, CURLOPT_CUSTOMREQUEST, ${JSON.stringify(method.toUpperCase())});\n${bodyBlock}curl_setopt($ch, CURLOPT_HTTPHEADER, [\n    "Authorization: Bearer " . ${JSON.stringify(token)},\n${contentType}    "Accept: application/json"\n]);\n\n$response = curl_exec($ch);\n$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);\ncurl_close($ch);\n\nif ($httpCode === 200) {\n    echo "Успешно: " . $response;\n} else {\n    echo "Ошибка ($httpCode): " . $response;\n}\n?>\n`;
     }
 
     function go(url, method, params, headers, body) {
@@ -145,7 +147,7 @@
             bodyArg = "payload";
             ctLine = '\treq.Header.Add("Content-Type", "application/json")\n';
         }
-        return `package main\n\nimport (\n${imports.join("\n")}\n)\n\nfunc main() {\n${bodyBlock}\treq, _ := http.NewRequest("${method.toUpperCase()}", "${fu}", ${bodyArg})\n\treq.Header.Add("Authorization", "Bearer ${token}")\n\treq.Header.Add("Accept", "application/json")\n${ctLine}\n\tclient := &http.Client{}\n\tresp, err := client.Do(req)\n\tif err != nil {\n\t\tfmt.Println("Ошибка запроса:", err)\n\t\treturn\n\t}\n\tdefer resp.Body.Close()\n\n\tbody, _ := io.ReadAll(resp.Body)\n\tfmt.Printf("Статус: %s\\nОтвет: %s\\n", resp.Status, string(body))\n}\n`;
+        return `package main\n\nimport (\n${imports.join("\n")}\n)\n\nfunc main() {\n${bodyBlock}\treq, _ := http.NewRequest(${JSON.stringify(method.toUpperCase())}, ${JSON.stringify(fu)}, ${bodyArg})\n\treq.Header.Add("Authorization", "Bearer "+${JSON.stringify(token)})\n\treq.Header.Add("Accept", "application/json")\n${ctLine}\n\tclient := &http.Client{}\n\tresp, err := client.Do(req)\n\tif err != nil {\n\t\tfmt.Println("Ошибка запроса:", err)\n\t\treturn\n\t}\n\tdefer resp.Body.Close()\n\n\tbody, _ := io.ReadAll(resp.Body)\n\tfmt.Printf("Статус: %s\\nОтвет: %s\\n", resp.Status, string(body))\n}\n`;
     }
 
     function generateAll(req) {

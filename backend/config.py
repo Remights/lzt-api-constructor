@@ -2,7 +2,7 @@
 import os
 import sys
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.2.0"
 GITHUB_RELEASES = "https://api.github.com/repos/Remights/lzt-api-constructor/releases/latest"
 WINDOW_TITLE = "LZT API Constructor — Визуальный конструктор и генератор кода для LOLZTEAM"
 HOST = "127.0.0.1"

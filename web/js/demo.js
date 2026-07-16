@@ -149,7 +149,7 @@
                 },
                 {
                     id: "s6", type: "sniper", x: 1300, y: 180,
-                    sniper: { source: "vars.filtered", maxPrice: "150", maxSpend: "3000", priceField: "price", itemField: "item_id" },
+                    sniper: { source: "vars.ai_result.items", maxPrice: "150", maxSpend: "3000", priceField: "price", itemField: "item_id" },
                 },
                 { id: "s7", type: "stop", x: 1580, y: 180 },
                 { id: "s8", type: "stop", x: 1300, y: 340 },

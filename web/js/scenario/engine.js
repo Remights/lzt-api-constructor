@@ -50,7 +50,10 @@
         const arr = getPath(ctx, filter.source);
         if (!Array.isArray(arr)) return { ok: false, items: [], arr: null };
         const items = arr.filter(item =>
-            evalCondition({ left: "__it." + filter.field, op: filter.op, right: filter.value }, { __it: item })
+            evalCondition(
+                { left: "__it." + filter.field, op: filter.op, right: filter.value },
+                Object.assign({}, ctx, { __it: item })
+            )
         );
         return { ok: true, items, arr };
     }

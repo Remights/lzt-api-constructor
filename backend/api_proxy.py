@@ -14,8 +14,9 @@ def normalize_proxy(proxy: str) -> Optional[str]:
         return None
     if "://" not in p:
         parts = p.split(":")
-        if len(parts) == 4:
-            host, port, user, pwd = parts
+        if len(parts) >= 4:
+            host, port, user = parts[0], parts[1], parts[2]
+            pwd = ":".join(parts[3:])
             p = f"http://{user}:{pwd}@{host}:{port}"
         else:
             p = f"http://{p}"
@@ -125,7 +126,7 @@ def send_notification(channel: str, text: str, tg_token: str = "", tg_chat: str 
         if channel in ("telegram", "both") and tg_token and tg_chat:
             r = requests.post(
                 f"https://api.telegram.org/bot{tg_token}/sendMessage",
-                json={"chat_id": tg_chat, "text": text, "parse_mode": "HTML"},
+                json={"chat_id": tg_chat, "text": text},
                 timeout=15,
             )
             results["telegram"] = {"ok": r.ok, "status": r.status_code}

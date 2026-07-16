@@ -198,7 +198,7 @@ def ai_free_endpoint(payload: FreeAiPayload, request: Request):
 
 
 @router.post("/api/stt")
-async def stt_endpoint(file: UploadFile = File(...), lang: str = Form("ru")):
+async def stt_endpoint(request: Request, file: UploadFile = File(...), lang: str = Form("ru")):
     try:
         data = await file.read()
     except Exception as e:
@@ -207,10 +207,28 @@ async def stt_endpoint(file: UploadFile = File(...), lang: str = Form("ru")):
     filename = file.filename or "voice.webm"
     if not data:
         return {"success": False, "error": "Пустой аудиофайл", "code": "empty"}
+    if len(data) > 25 * 1024 * 1024:
+        return {"success": False, "error": "Аудио слишком большое (макс. 25 МБ)", "code": "too_large"}
+
+    fp = request.headers.get("x-lzt-client") or request.headers.get("X-LZT-Client")
 
     if ai_gateway.groq_keys():
+        ok_fp, err_fp = ai_gateway.validate_fingerprint(fp)
+        if not ok_fp:
+            return {"success": False, "error": err_fp, "code": "bad_client"}
+        client_ip = ai_gateway.resolve_client_ip(request)
+        ok_rl, remaining, limit = ai_gateway.rate_limit_status(client_ip, fp)
+        if not ok_rl:
+            return {
+                "success": False,
+                "error": f"Лимит STT/AI: {limit} запросов в час.",
+                "code": "rate_limit",
+                "remaining": 0,
+                "limit": limit,
+            }
         ok, result = ai_gateway.transcribe_audio(data, filename, lang)
         if ok:
+            ai_gateway.record_usage(client_ip, fp)
             return {"success": True, "text": result["text"], "language": result.get("language")}
         return {"success": False, "error": result.get("error", "Ошибка STT"), "code": result.get("code")}
 

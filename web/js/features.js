@@ -2,7 +2,7 @@
 (function () {
     "use strict";
 
-    const APP_VERSION = "1.3.0";
+    const APP_VERSION = "1.2.0";
     const TABS_KEY = "lzt_scenario_tabs";
     const SPEND_KEY = "lzt_profit_tracker";
 
@@ -151,8 +151,10 @@
 
         const closeTab = (i) => {
             if (st.tabs.length <= 1) return;
+            if (i === st.active) persistCurrent();
             st.tabs.splice(i, 1);
-            if (st.active >= st.tabs.length) st.active = st.tabs.length - 1;
+            if (i < st.active) st.active--;
+            else if (st.active >= st.tabs.length) st.active = st.tabs.length - 1;
             saveTabsState(st);
             S.load(st.tabs[st.active].data, { keepView: true });
             renderTabs();
@@ -468,11 +470,14 @@
         S._featuresHooked = true;
         const origRun = S.run.bind(S);
         S.run = async function (opts) {
-            await origRun(opts);
-            if (S._runStats) {
+            const out = await origRun(opts);
+            if (!out || out.error === "busy") return out;
+            const spent = S._runStats?.spent || 0;
+            if (S._runStats && (S._runCompleted || spent > 0)) {
                 S._runStats._finalize = true;
                 updateProfit(S._runStats);
             }
+            if (!S._runCompleted || out.aborted) return out;
             if (localStorage.getItem("lzt_sound") === "1") {
                 try {
                     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -492,6 +497,7 @@
                 const ok = (st.reqErr || 0) === 0;
                 LZTToast("Сценарий завершён", `${S.title}: ${st.reqOk || 0} OK, ${st.reqErr || 0} ошибок`, { type: ok ? "success" : "warn" });
             }
+            return out;
         };
     }
 

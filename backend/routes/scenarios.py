@@ -43,7 +43,11 @@ async def put_autosave(request: Request):
         body = await request.json()
     except Exception:
         return {"ok": False, "error": "invalid json"}
-    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(body, dict) or "data" not in body:
+        return {"ok": False, "error": "expected { \"data\": ... }"}
+    data = body.get("data")
+    if data is not None and not isinstance(data, dict):
+        return {"ok": False, "error": "data must be object or null"}
     save_autosave(data)
     return {"ok": True}
 
@@ -60,6 +64,7 @@ async def put_tabs(request: Request):
     except Exception:
         return {"ok": False, "error": "invalid json"}
     state = body.get("state") if isinstance(body, dict) else None
-    if state is not None:
-        save_tabs(state)
+    if state is None:
+        return {"ok": False, "error": "expected { \"state\": ... }"}
+    save_tabs(state)
     return {"ok": True}

@@ -51,6 +51,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     await Constructor.init();
     // Холст сценариев (центральная область)
     if (window.Scenario) await Scenario.init();
+    document.dispatchEvent(new Event("lzt-scenario-ready"));
 
     document.getElementById("req-method")?.addEventListener("change", (e) => {
         currentMethod = e.target.value;

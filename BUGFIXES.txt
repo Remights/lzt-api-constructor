@@ -1,0 +1,54 @@
+[1.2.0]
+
+НОВОЕ — Webhooks / хуки
+локальный шлюз POST /api/hooks/event — внешний софт кидает JSON, конструктор гоняет сценарий, отвечает обратно
+в сценарии payload лежит в vars.hook, ответ клади в vars.hook_response
+секрет X-LZT-Hook-Secret + вкл/выкл в Настройках
+можно указать scenario_id — подгрузит сохранённый сценарий (в новую вкладку, если текущая занята)
+wait=true ждёт ответ (до 120с), wait=false — async job_id
+после timeout job гасится — late complete не перезапишет ответ
+поллер хуков стартует после Scenario.init (lzt-scenario-ready)
+
+блок «Скрипт» — .py/.js из папки %APPDATA%/LZT API Constructor/hooks
+stdin JSON → stdout JSON, пример hook_example.py кладётся сам
+
+---
+
+багфиксы 1.2.0 (аудит #2):
+
+python_async cur_proxy — SyntaxError (лишняя скобка)
+popover снова выше backdrop; модалки выше панелей
+webhook demo + hardFail (снайпер/скрипт/чекер/notify) в ok
+снайпер codegen: 200+errors ≠ покупка; checker deleted/is_sold
+filter exists/'' + {{vars}} в value; foreach indexVar PHP/C#/Go
+isDemo не залипает в save; умный снайпер → ai_result.items
+free AI: consume_rate_slot атомарно; Telegram без parse_mode HTML
+codegen modal: escape URL/curl; PATCH; price-grid/mobile CSS
+
+багфиксы 1.2.0 (аудит):
+
+webhook: Scenario.run реально возвращает ok/result; top-level ok = нет ошибок запросов
+стоп → run: нет параллельных циклов (токен + _runBusy)
+расписание: demo-сценарий не бьёт в живой API
+вкладки: закрытие слева не прыгает на чужой таб + persist перед close
+codegen: body JSON (не form), PHP $_arr/$_res, notify/logmsg с {{vars}}
+codegen: Bash/Go резолвят {{vars}}; Go/C# nested vars.item.x; condition resolve RHS
+codegen: sniper fail-port; maxPrice 0 ≠ unlimited; AI/скрипт/подсценарий — hard fail
+codegen: proxy без wiring → throw (Node/PHP/C#/Go); python_async import json
+codegen: modal Python json=; C# URL ?/&; CSV savefile async/PHP; retries catch → onerror
+снайпер/чекер: Bearer; API fail → порт fail
+анализ цены: pmax от цены лота; popup не пишет в sidebar (отдельный id)
+fingerprint free AI = APP_VERSION из config (не 1.3.0)
+storage merge под локом; flush не теряет dirty; profit finalize при spent>0
+подсценарий без шаблона не идёт в out
+
+багфиксы (ещё с 1.1.1, если не выкладывал):
+
+снайпер — fast-buy шлёт price + проверка errors в ответе
+codegen снайпера — price на всех языках
+блок ИИ — free AI без своего ключа, битый JSON → Ошибка
+стоп — сразу отпускает UI
+трекер трат — не дублирует при failed run
+анализ цены — категория лота, не только steam
+storage merge / autosave не стирает / STT лимит / AI лимит после успеха
+прокси с : в пароле, check-proxies timeout, sendBeacon json

@@ -30,10 +30,11 @@
         return [];
     }
 
-    async function fetchSimilarSteam(params) {
+    async function fetchSimilarMarket(endpoint, params) {
+        const ep = String(endpoint || "steam").replace(/^\/+|\/+$/g, "") || "steam";
         const q = Object.assign({ order_by: "price_to_up", pmin: "1" }, params || {});
         const body = {
-            url: "https://prod-api.lzt.market/steam",
+            url: `https://prod-api.lzt.market/${ep}`,
             method: "GET",
             params: q,
             headers: {},
@@ -58,13 +59,62 @@
         return extractItems(result.data);
     }
 
+    async function fetchItemById(itemId) {
+        const body = {
+            url: `https://prod-api.lzt.market/${itemId}`,
+            method: "GET",
+            params: {},
+            headers: {},
+            body: null,
+            timeout: 20,
+        };
+        const token = window.LZTToken?.get?.();
+        if (token) body.headers = { Authorization: "Bearer " + token };
+        if (window.Scenario?._demoMode && window.LZTDemo) {
+            const r = await window.LZTDemo.mockApiTest(body);
+            return r.data?.item || r.data;
+        }
+        const res = await fetch("/api/test", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+        const result = await res.json();
+        if (!result.success) return null;
+        const d = result.data;
+        return d?.item || d;
+    }
+
+    function categoryFromItem(item) {
+        if (!item || typeof item !== "object") return "steam";
+        const raw = item.category_url || item.category?.category_url || item.category_name || item.category?.category_name || "";
+        const s = String(raw).replace(/^\/+|\/+$/g, "");
+        if (s) return s.split("/").pop() || "steam";
+        return "steam";
+    }
+
+    async function fetchSimilarSteam(params) {
+        return fetchSimilarMarket("steam", params);
+    }
+
     async function analyzeByItemId(itemId, opts) {
         opts = opts || {};
-        const items = await fetchSimilarSteam({ pmax: String(opts.pmax || 500) });
+        let category = opts.category || null;
+        let current = null;
+        if (!opts.demo) {
+            current = await fetchItemById(itemId);
+            if (current) category = category || categoryFromItem(current);
+        }
+        category = category || "steam";
+        const itemPrice = parseFloat(current?.price);
+        const pmaxDefault = itemPrice > 0 ? Math.max(Math.ceil(itemPrice * 1.5), Math.ceil(itemPrice + 50)) : 500;
+        const items = await fetchSimilarMarket(category, { pmax: String(opts.pmax || pmaxDefault) });
         const prices = items.map(x => parseFloat(x.price)).filter(n => !isNaN(n) && n > 0);
         const st = stats(prices);
 
-        let current = items.find(x => String(x.item_id) === String(itemId));
+        if (!current) {
+            current = items.find(x => String(x.item_id) === String(itemId));
+        }
         if (!current && opts.demo) {
             current = window.LZTDemo?.MOCK_ITEMS?.find(x => String(x.item_id) === String(itemId)) || {
                 item_id: itemId, price: st.median || 50, title: "Demo lot " + itemId,
@@ -96,8 +146,8 @@
         }).join("");
     }
 
-    function renderPanel(data) {
-        const box = document.getElementById("price-analyze-result");
+    function renderPanel(data, targetId) {
+        const box = document.getElementById(targetId || "price-analyze-result");
         if (!box || !data) return;
         const st = data.stats;
         const v = data.verdict;
@@ -118,18 +168,18 @@
             </div>
             <div class="price-verdict ${badgeCls}">${escapeHtml(v.label)}${pctTxt ? ` · ${pctTxt}` : ""}</div>
             <div class="price-similar-title">Похожие лоты (${data.sampleSize} в выборке)</div>
-            <div id="price-analyze-bars"></div>
+            <div class="price-analyze-bars"></div>
             <ul class="price-similar-list">${(data.similar || []).map(x =>
                 `<li><span>${escapeHtml(String(x.title || x.item_id).slice(0, 48))}</span><b>${x.price} ₽</b></li>`
             ).join("")}</ul>`;
-        renderBars(document.getElementById("price-analyze-bars"), data.similar || [], st.max);
+        renderBars(box.querySelector(".price-analyze-bars"), data.similar || [], st.max);
     }
 
     function escapeHtml(s) {
         return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
-    async function runAnalyze(demo) {
+    async function runAnalyze(demo, targetId) {
         const input = document.getElementById("price-analyze-id");
         const status = document.getElementById("price-analyze-status");
         const id = parseItemIdFromText(input?.value);
@@ -138,15 +188,17 @@
             return;
         }
         if (status) status.textContent = "Загрузка…";
+        const prevDemo = window.Scenario?._demoMode;
         try {
             if (demo && window.Scenario) window.Scenario._demoMode = true;
             const data = await analyzeByItemId(id, { demo: !!demo });
-            renderPanel(data);
+            renderPanel(data, targetId || "price-analyze-result");
             if (status) status.textContent = "";
         } catch (e) {
             if (status) status.textContent = String(e.message || e);
         } finally {
-            if (demo && window.Scenario) window.Scenario._demoMode = false;
+            if (window.Scenario && prevDemo !== undefined) window.Scenario._demoMode = prevDemo;
+            else if (demo && window.Scenario && !window.Scenario._runBusy) window.Scenario._demoMode = false;
         }
     }
 
@@ -177,7 +229,7 @@
             pop.innerHTML = `<div class="price-analyze-popup-inner">
                 <button type="button" class="price-popup-close">&times;</button>
                 <div class="widget-title"><i class="fa-solid fa-chart-line"></i> Анализ цены</div>
-                <div id="price-analyze-result"></div>
+                <div id="price-analyze-popup-result"></div>
             </div>`;
             document.body.appendChild(pop);
             pop.querySelector(".price-popup-close").addEventListener("click", () => { pop.style.display = "none"; });
@@ -186,7 +238,7 @@
         pop.style.display = "flex";
         const inp = document.getElementById("price-analyze-id");
         if (inp) inp.value = itemId;
-        runAnalyze(!!window.Scenario?._demoMode);
+        runAnalyze(!!window.Scenario?._scenarioIsDemo, "price-analyze-popup-result");
     }
 
     window.LZTPriceAnalyzer = {

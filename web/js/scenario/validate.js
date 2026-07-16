@@ -38,7 +38,9 @@
         const hasAi = nodes.some(n => n.type === "ai" && reachable.has(n.id));
         if (hasAi && !opts.demoMode) {
             const aiKey = (typeof localStorage !== "undefined" && localStorage.getItem("lzt_ai_key") || "").trim();
-            if (!aiKey) warnings.push("Блок «ИИ» в сценарии — задайте API-ключ ИИ в AI+ (или используйте демо-режим).");
+            if (!aiKey) {
+                warnings.push("Блок «ИИ» без своего ключа — попробует бесплатный AI (если доступен на сервере).");
+            }
         }
 
         nodes.forEach(n => {
