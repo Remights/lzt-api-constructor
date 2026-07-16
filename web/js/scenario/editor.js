@@ -119,7 +119,7 @@ window.ScenarioEditorMixin = {
         body.addEventListener("click", (e) => {
             this.selectedNode = node.id;
             this.render();
-            if (["start", "request", "condition", "delay", "loop", "variable", "filter", "notify", "logmsg", "savefile", "proxy", "foreach", "checker", "sniper", "ai", "subscenario"].includes(node.type)) {
+            if (["start", "request", "condition", "delay", "loop", "variable", "filter", "notify", "logmsg", "savefile", "proxy", "foreach", "checker", "sniper", "ai", "script", "subscenario"].includes(node.type)) {
                 this.openPropEditor(node, e.clientX, e.clientY);
             }
         });
@@ -228,6 +228,12 @@ window.ScenarioEditorMixin = {
             return `<div class="snode-strong"><i class="fa-solid fa-brain"></i> ${a.batch !== false ? "пакет" : "один"} · ${this.esc(a.outputVar || "ai_result")}</div>
                 <div class="snode-muted">из <code>${this.esc(a.source || "last.items")}</code></div>
                 <div class="snode-edit-hint"><i class="fa-solid fa-pen"></i> нажмите, чтобы настроить</div>`;
+        }
+        if (node.type === "script") {
+            const s = node.script || {};
+            return `<div class="snode-strong"><i class="fa-solid fa-puzzle-piece"></i> ${this.esc(s.filename || "script.py")}</div>
+                <div class="snode-muted">→ <code>vars.${this.esc(s.saveAs || "script_out")}</code></div>
+                <div class="snode-edit-hint"><i class="fa-solid fa-pen"></i> файл из папки hooks</div>`;
         }
         if (node.type === "subscenario") {
             const ss = node.subscenario;
@@ -548,6 +554,9 @@ window.ScenarioEditorMixin = {
                 blk("checker", "fa-user-check", "#2980b9"),
                 blk("sniper", "fa-crosshairs", "#c0392b"),
                 blk("ai", "fa-brain", "#9b59b6"),
+            ]},
+            { cat: t("blocks.cat.hooks", "Хуки"), items: [
+                blk("script", "fa-puzzle-piece", "#e67e22"),
             ]},
             { cat: t("blocks.cat.settings", "Настройки и пауза"), items: [
                 blk("proxy", "fa-shield-halved", "#607d8b"),

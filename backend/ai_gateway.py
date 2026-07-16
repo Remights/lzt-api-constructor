@@ -12,13 +12,21 @@ from typing import Deque, Dict, List, Optional, Tuple
 
 import requests
 
-APP_VERSION = os.environ.get("LZT_APP_VERSION", "1.3.0")
+try:
+    from backend.config import APP_VERSION as _CFG_VER
+except Exception:
+    _CFG_VER = "1.2.0"
+APP_VERSION = os.environ.get("LZT_APP_VERSION", _CFG_VER)
 DEFAULT_FINGERPRINT_PREFIX = "LZTConstruct/"
 DEFAULT_MODEL = os.environ.get("GROQ_FREE_MODEL", "llama-3.1-8b-instant")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_STT_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 STT_MODEL = os.environ.get("GROQ_STT_MODEL", "whisper-large-v3-turbo")
-FREE_LIMIT_PER_HOUR = int(os.environ.get("LZT_FREE_AI_LIMIT", "15"))
+FREE_LIMIT_PER_HOUR = 15
+try:
+    FREE_LIMIT_PER_HOUR = int(os.environ.get("LZT_FREE_AI_LIMIT", "15"))
+except ValueError:
+    FREE_LIMIT_PER_HOUR = 15
 WINDOW_SEC = 3600
 
 # Белый список моделей Groq для бесплатного режима (можно сузить через GROQ_FREE_MODELS)

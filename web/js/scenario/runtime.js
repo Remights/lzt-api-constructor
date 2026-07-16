@@ -3,8 +3,15 @@ window.ScenarioRuntimeMixin = {
     bindRun() {
         document.getElementById("btn-run-scenario")?.addEventListener("click", () => {
             if (this._runBusy) {
+                // не сбрасываем _runBusy здесь — иначе Stop→Run даст два параллельных цикла
                 this._runToken = null;
                 this.running = false;
+                this._runCompleted = false;
+                this._activeEdge = null;
+                document.getElementById("run-debug")?.classList.remove("run-active");
+                const t = (k, fb) => (window.I18N && I18N.t(k)) || fb;
+                document.getElementById("run-status").textContent = t("run.status.stopping", "остановка…") || "остановка…";
+                this.log(`<span class="log-warn"><i class="fa-solid fa-stop"></i> Остановка…</span>`);
                 return;
             }
             this.run({ demo: !!this._scenarioIsDemo });
@@ -56,7 +63,7 @@ window.ScenarioRuntimeMixin = {
         const tick = () => {
             if (!this.running) {
                 this.log(`<span class="log-time">${this.now()}</span> <i class="fa-solid fa-clock" style="color:var(--lzt-green);"></i> Запуск по расписанию`);
-                this.run();
+                this.run({ demo: !!this._scenarioIsDemo });
             }
         };
         // первый запуск через интервал (не сразу — новички часто включают случайно)
@@ -288,25 +295,52 @@ window.ScenarioRuntimeMixin = {
         return res.json();
     },
 
+    _lztBuyOk(result) {
+        if (!result?.success) return false;
+        if ((result.status_code || 0) >= 400) return false;
+        const d = result.data;
+        if (!d || typeof d !== "object") return false;
+        if (Array.isArray(d.errors) && d.errors.length) return false;
+        if (d.error) return false;
+        return true;
+    },
+
     async scenarioAiCall(prompt, system) {
         if (this._demoMode && window.LZTDemo) return window.LZTDemo.mockAiResponse(prompt);
-        let cfg = {};
-        try { cfg = JSON.parse(localStorage.getItem("lzt_ai_cfg") || "{}"); } catch (e) {}
+        const sys = system || "Ответь кратко. Если просят JSON — только валидный JSON без markdown.";
         const key = (localStorage.getItem("lzt_ai_key") || "").trim();
-        if (!key) throw new Error("Нет API-ключа ИИ — настройте в AI+ или настройках");
-        const res = await fetch("/api/ai", {
+        if (key) {
+            let cfg = {};
+            try { cfg = JSON.parse(localStorage.getItem("lzt_ai_cfg") || "{}"); } catch (e) {}
+            const res = await fetch("/api/ai", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    base_url: (cfg.base || "https://api.openai.com/v1").replace(/\/+$/, ""),
+                    api_key: key,
+                    model: cfg.model || "gpt-4o-mini",
+                    system: sys,
+                    prompt,
+                }),
+            });
+            const data = await res.json();
+            if (!data.success) throw new Error(data.error || "Ошибка ИИ");
+            return data.content;
+        }
+        let fp = "LZTConstruct/1.2.0";
+        try {
+            const cr = await fetch("/api/config", { headers: { "X-LZT-Client": fp } });
+            const cfg = await cr.json();
+            if (cfg.client_fp) fp = cfg.client_fp;
+        } catch (e) { /* ignore */ }
+        const freeModel = (localStorage.getItem("lzt_ai_free_model") || "").trim();
+        const res = await fetch("/api/ai/free", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                base_url: (cfg.base || "https://api.openai.com/v1").replace(/\/+$/, ""),
-                api_key: key,
-                model: cfg.model || "gpt-4o-mini",
-                system: system || "Ответь кратко. Если просят JSON — только валидный JSON без markdown.",
-                prompt,
-            }),
+            headers: { "Content-Type": "application/json", "X-LZT-Client": fp },
+            body: JSON.stringify({ prompt, system: sys, model: freeModel || undefined }),
         });
         const data = await res.json();
-        if (!data.success) throw new Error(data.error || "Ошибка ИИ");
+        if (!data.success) throw new Error(data.error || "Бесплатный ИИ недоступен — задайте ключ в AI+");
         return data.content;
     },
 
@@ -326,6 +360,19 @@ window.ScenarioRuntimeMixin = {
         this._playSniperBeep();
     },
 
+    _authHeaders(extra) {
+        const headers = Object.assign(
+            {},
+            (typeof currentHeaders !== "undefined" ? currentHeaders : {}) || {},
+            extra || {}
+        );
+        const token = window.LZTToken?.get?.();
+        if (token && !headers.Authorization && !headers.authorization) {
+            headers.Authorization = `Bearer ${token}`;
+        }
+        return headers;
+    },
+
     // Универсальный исполнитель графа (основной сценарий + под-сценарии)
     async _execLoop(initialCur, ctx, stats, counters, proxyState, opts) {
         opts = Object.assign({ maxSteps: 300, silent: false, label: "" }, opts || {});
@@ -339,7 +386,8 @@ window.ScenarioRuntimeMixin = {
             this.log(`<span class="log-time">${this.now()}</span> <i class="fa-solid fa-layer-group"></i> Под-сценарий: <b>${this.esc(opts.label)}</b>`);
         }
         try {
-            while (cur && this.running && this._runToken != null && steps < opts.maxSteps) {
+            const myToken = this._runToken;
+            while (cur && this.running && this._runToken === myToken && steps < opts.maxSteps) {
                 steps++;
                 const node = this.getNode(cur);
                 if (!node) break;
@@ -367,10 +415,10 @@ window.ScenarioRuntimeMixin = {
                     const url = (window.ScenarioNormalize?.fixMarketUrl || (u => u))(this.resolveVars(req.url, ctx));
                     const params = this.resolveVars(req.params || {}, ctx);
                     const body = req.body ? this.resolveVars(req.body, ctx) : null;
-                    const headers = Object.assign({}, (typeof currentHeaders !== "undefined" ? currentHeaders : {}) || {}, req.headers || {});
-                    const token = window.LZTToken?.get?.();
-                    if (token && !headers.Authorization && !headers.authorization) {
-                        headers.Authorization = `Bearer ${token}`;
+                    const headers = Object.assign({}, this._authHeaders(), this.resolveVars(req.headers || {}, ctx));
+                    if (!headers.Authorization && !headers.authorization) {
+                        const token = window.LZTToken?.get?.();
+                        if (token) headers.Authorization = `Bearer ${token}`;
                     }
                     this.log(`<span class="log-time">${this.now()}</span> <b>${this.esc(req.title || "Запрос")}</b>`);
                     this.debugLog(`<span class="log-time">${this.now()}</span> <span class="log-dim">${req.method} ${this.esc(this.shortUrl(url))}</span>`);
@@ -475,9 +523,9 @@ window.ScenarioRuntimeMixin = {
                         const res = await fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: n.channel, text, tg_token: n.tgToken, tg_chat: n.tgChat, discord_url: n.discordUrl }) });
                         const r = await res.json();
                         if (r.success) { this.setNodeState(node.id, "done"); this.log(`<span class="log-ok">✓ отправлено</span>`); }
-                        else { this.setNodeState(node.id, "error"); this.log(`<span class="log-err">✕ ${this.esc(r.error || "не отправлено")}</span>`); }
+                        else { this.setNodeState(node.id, "error"); stats.hardFail = (stats.hardFail || 0) + 1; this.log(`<span class="log-err">✕ ${this.esc(r.error || "не отправлено")}</span>`); }
                         }
-                    } catch (err) { this.setNodeState(node.id, "error"); this.log(`<span class="log-err">✕ ${this.esc(String(err))}</span>`); }
+                    } catch (err) { this.setNodeState(node.id, "error"); stats.hardFail = (stats.hardFail || 0) + 1; this.log(`<span class="log-err">✕ ${this.esc(String(err))}</span>`); }
                     cur = this.followEdge(node.id, "out");
                 } else if (node.type === "logmsg") {
                     const text = this.resolveVars(node.logmsg.text, ctx);
@@ -566,7 +614,7 @@ window.ScenarioRuntimeMixin = {
                     this.log(`<span class="log-time">${this.now()}</span> <i class="fa-solid fa-user-check"></i> Проверка лота <b>${this.esc(String(itemId))}</b>`);
                     let ok = false, errText = "";
                     try {
-                        const result = await this.apiTest({ url, method: "GET", params: {}, headers: Object.assign({}, currentHeaders || {}), body: null, proxy: ctx.proxy || null, timeout: 15 });
+                        const result = await this.apiTest({ url, method: "GET", params: {}, headers: this._authHeaders(), body: null, proxy: ctx.proxy || null, timeout: 15 });
                         if (result.success && result.data) {
                             const item = result.data.item || result.data;
                             const sold = item.item_state === "paid" || item.item_state === "deleted" || item.is_sold;
@@ -575,6 +623,7 @@ window.ScenarioRuntimeMixin = {
                         } else errText = result.error || "ошибка";
                     } catch (e) { errText = String(e); }
                     this.setNodeState(node.id, ok ? "done" : "error");
+                    if (!ok) stats.hardFail = (stats.hardFail || 0) + 1;
                     this.log(ok ? `<span class="log-ok">✓ аккаунт OK</span>` : `<span class="log-err">✕ ${this.esc(errText)}</span>`);
                     cur = this.followEdge(node.id, ok ? "ok" : "fail");
                 } else if (node.type === "ai") {
@@ -593,15 +642,23 @@ window.ScenarioRuntimeMixin = {
                         let raw = await this.scenarioAiCall(userPrompt);
                         if (typeof raw === "string") raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
                         let parsed;
-                        try { parsed = typeof raw === "string" ? JSON.parse(raw) : raw; } catch (e) { parsed = { raw }; }
+                        let aiOk = true;
+                        try { parsed = typeof raw === "string" ? JSON.parse(raw) : raw; } catch (e) { parsed = { raw }; aiOk = false; }
                         const outVar = a.outputVar || "ai_result";
                         ctx.vars[outVar] = parsed;
                         ctx.last = parsed;
                         this.lastRunData[node.id] = parsed;
+                        if (!aiOk) {
+                            this.setNodeState(node.id, "error");
+                            this.log(`<span class="log-err">✕ ИИ: ответ не JSON</span>`);
+                            cur = this.followEdge(node.id, "error");
+                            if (!cur) { this.log(`<span class="log-dim">→ выход «Ошибка» не подключён, стоп.</span>`); return null; }
+                        } else {
                         this.setNodeState(node.id, "done");
                         const recs = Array.isArray(parsed.items) ? parsed.items.length : 0;
                         this.log(`<span class="log-ok">✓ ИИ</span> <span class="log-dim">${recs ? recs + " рекомендаций → vars." + outVar : this.summary(parsed)}</span>`);
                         cur = this.followEdge(node.id, "success");
+                        }
                         if (!cur) this.log(`<span class="log-dim">→ выход «Успех» ни к чему не подключён, стоп.</span>`);
                     } catch (err) {
                         this.setNodeState(node.id, "error");
@@ -612,8 +669,10 @@ window.ScenarioRuntimeMixin = {
                 } else if (node.type === "sniper") {
                     const sn = node.sniper;
                     const items = this.getPath(ctx, sn.source);
-                    const maxP = parseFloat(this.resolveVars(String(sn.maxPrice), ctx)) || Infinity;
-                    const maxSpend = parseFloat(this.resolveVars(String(sn.maxSpend), ctx)) || Infinity;
+                    const maxPRaw = this.resolveVars(String(sn.maxPrice), ctx);
+                    const maxSRaw = this.resolveVars(String(sn.maxSpend), ctx);
+                    const maxP = (maxPRaw === "" || maxPRaw == null || isNaN(parseFloat(maxPRaw))) ? Infinity : parseFloat(maxPRaw);
+                    const maxSpend = (maxSRaw === "" || maxSRaw == null || isNaN(parseFloat(maxSRaw))) ? Infinity : parseFloat(maxSRaw);
                     ctx.vars._lzt_spend = ctx.vars._lzt_spend || 0;
                     let port = "skip", bought = false;
                     if (!Array.isArray(items) || !items.length) {
@@ -627,8 +686,8 @@ window.ScenarioRuntimeMixin = {
                             const url = `https://prod-api.lzt.market/${id}/fast-buy`;
                             this.log(`<span class="log-time">${this.now()}</span> <i class="fa-solid fa-crosshairs"></i> Покупка <b>${id}</b> за ${price}₽…`);
                             try {
-                                const result = await this.apiTest({ url, method: "POST", params: {}, headers: Object.assign({}, currentHeaders || {}), body: null, proxy: ctx.proxy || null, timeout: 20 });
-                                if (result.success && (result.status_code || 200) < 400) {
+                                const result = await this.apiTest({ url, method: "POST", params: { price: String(price) }, headers: this._authHeaders(), body: null, proxy: ctx.proxy || null, timeout: 20 });
+                                if (this._lztBuyOk(result)) {
                                     ctx.vars._lzt_spend += price;
                                     stats.spent = (stats.spent || 0) + price;
                                     bought = true; port = "bought";
@@ -636,23 +695,83 @@ window.ScenarioRuntimeMixin = {
                                     this._sniperToast(id, price);
                                     if (window.LZTFeatures) window.LZTFeatures.updateProfit(stats);
                                     break;
-                                } else this.log(`<span class="log-err">✕ ${this.esc(result.error || "не куплено")}</span>`);
-                            } catch (e) { port = "fail"; this.log(`<span class="log-err">✕ ${this.esc(String(e))}</span>`); break; }
+                                } else {
+                                    port = "fail";
+                                    stats.hardFail = (stats.hardFail || 0) + 1;
+                                    this.log(`<span class="log-err">✕ ${this.esc(result.error || "не куплено")}</span>`);
+                                    break;
+                                }
+                            } catch (e) { port = "fail"; stats.hardFail = (stats.hardFail || 0) + 1; this.log(`<span class="log-err">✕ ${this.esc(String(e))}</span>`); break; }
                         }
                     }
                     this.setNodeState(node.id, bought ? "done" : port === "fail" ? "error" : "done");
                     cur = this.followEdge(node.id, port);
+                } else if (node.type === "script") {
+                    const s = node.script || {};
+                    const fname = (s.filename || "").trim();
+                    const saveAs = (s.saveAs || "script_out").trim() || "script_out";
+                    const timeout = Math.min(120, Math.max(1, parseInt(s.timeout, 10) || 30));
+                    this.log(`<span class="log-time">${this.now()}</span> <i class="fa-solid fa-puzzle-piece" style="color:#e67e22;"></i> Скрипт <b>${this.esc(fname || "?")}</b>`);
+                    if (!fname) {
+                        this.setNodeState(node.id, "error");
+                        this.log(`<span class="log-err">Не указан файл скрипта (папка hooks)</span>`);
+                        cur = this.followEdge(node.id, "error");
+                        if (!cur) return null;
+                    } else if (this._demoMode) {
+                        const mock = { ok: true, demo: true, echo: ctx.vars.hook || ctx.last };
+                        ctx.vars[saveAs] = mock;
+                        ctx.last = mock;
+                        this.setNodeState(node.id, "done");
+                        this.log(`<span class="log-ok">✓ [демо] скрипт</span>`);
+                        cur = this.followEdge(node.id, "success");
+                    } else {
+                        try {
+                            const payload = {
+                                hook: ctx.vars.hook || null,
+                                last: ctx.last,
+                                vars: ctx.vars,
+                                event: ctx.vars.hook_event || null,
+                            };
+                            const res = await fetch("/api/hooks/script", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ filename: fname, payload, timeout }),
+                            });
+                            const r = await res.json();
+                            if (r.ok) {
+                                ctx.vars[saveAs] = r.result;
+                                ctx.last = r.result;
+                                this.lastRunData[node.id] = r.result;
+                                this.setNodeState(node.id, "done");
+                                this.log(`<span class="log-ok">✓ скрипт → vars.${this.esc(saveAs)}</span>`);
+                                cur = this.followEdge(node.id, "success");
+                            } else {
+                                this.setNodeState(node.id, "error");
+                                stats.hardFail = (stats.hardFail || 0) + 1;
+                                this.log(`<span class="log-err">✕ ${this.esc(r.error || "ошибка скрипта")}</span>`);
+                                cur = this.followEdge(node.id, "error");
+                                if (!cur) return null;
+                            }
+                        } catch (e) {
+                            this.setNodeState(node.id, "error");
+                            stats.hardFail = (stats.hardFail || 0) + 1;
+                            this.log(`<span class="log-err">✕ ${this.esc(String(e))}</span>`);
+                            cur = this.followEdge(node.id, "error");
+                            if (!cur) return null;
+                        }
+                    }
                 } else if (node.type === "subscenario") {
                     const ss = node.subscenario;
                     let tpl = null;
                     try {
-                        tpl = JSON.parse(localStorage.getItem("lzt_scenarios") || "[]").find(t => t.id === ss.templateId);
+                        tpl = (window.Scenario?.savedList?.() || JSON.parse(localStorage.getItem("lzt_scenarios") || "[]")).find(t => t.id === ss.templateId);
                     } catch (e) {}
                     const subNodes = tpl?.nodes || tpl?.data?.nodes || [];
                     const subEdges = tpl?.edges || tpl?.data?.edges || [];
                     if (!tpl || !subNodes.length) {
                         if (!opts.silent) this.setNodeState(node.id, "error");
                         this.log(`<span class="log-err">Под-сценарий не выбран или не найден</span>`);
+                        cur = null;
                     } else {
                         const subStart = subNodes.find(n => n.type === "start");
                         const subEdge = subEdges.find(e => e.from === subStart?.id && e.fromPort === "out");
@@ -662,13 +781,13 @@ window.ScenarioRuntimeMixin = {
                                 nodes: subNodes,
                                 edges: subEdges,
                                 maxSteps: 200,
-                                silent: true,
+                                silent: false,
                                 label: tpl.title
                             });
                         }
                         if (!opts.silent) this.setNodeState(node.id, "done");
+                        cur = this.followEdge(node.id, "out");
                     }
-                    cur = this.followEdge(node.id, "out");
                 } else if (node.type === "delay") {
                     this.log(`<span class="log-time">${this.now()}</span> Пауза ${node.delay.ms} мс…`);
                     await this.sleep(node.delay.ms);
@@ -684,29 +803,31 @@ window.ScenarioRuntimeMixin = {
 
     async run(opts = {}) {
         this._demoMode = !!(opts && opts.demo);
+        this._runCompleted = false;
+        this._lastHookResult = null;
         try {
-        if (this._runBusy) return;
+        if (this._runBusy) return { ok: false, error: "busy" };
         const t = (k, fb) => (window.I18N && I18N.t(k)) || fb;
         const start = this.nodes.find(n => n.type === "start");
         if (!start) {
             const msg = t("run.err.noStart", "Нет блока «Старт».");
             this.log(`<span class="log-err">${this.esc(msg)}</span>`);
-            if (window.LZTDialog) await LZTDialog.alert(msg, { title: t("run.err.noConnectionTitle", "Ошибка") });
-            return;
+            if (!opts.fromHook && window.LZTDialog) await LZTDialog.alert(msg, { title: t("run.err.noConnectionTitle", "Ошибка") });
+            return { ok: false, error: msg };
         }
         const startCur = this.edgeTarget(start.id, "out");
         if (!startCur) {
             const msg = t("run.err.noConnection", "От «Старта» ничего не подключено.");
             this.log(`<span class="log-err"><i class="fa-solid fa-circle-xmark"></i> ${this.esc(msg.split("\n")[0])}</span>`);
-            if (window.LZTDialog) await LZTDialog.alert(msg, { title: t("run.err.noConnectionTitle", "Сначала соедините блоки") });
-            else this.flash?.(msg.split("\n")[0], "err");
-            return;
+            if (!opts.fromHook && window.LZTDialog) await LZTDialog.alert(msg, { title: t("run.err.noConnectionTitle", "Сначала соедините блоки") });
+            else if (!opts.fromHook) this.flash?.(msg.split("\n")[0], "err");
+            return { ok: false, error: msg };
         }
 
         const check = this.validateScenario();
         if (check.errors.length) {
             check.errors.forEach(e => this.log(`<span class="log-err"><i class="fa-solid fa-circle-xmark"></i> ${this.esc(e)}</span>`));
-            return;
+            return { ok: false, error: check.errors[0] };
         }
 
         this._runBusy = true;
@@ -717,21 +838,33 @@ window.ScenarioRuntimeMixin = {
         debugBox?.classList.add("run-active");
         this.clearRunStates();
         this._resetLogBoxes();
-        this.log(`<span class="log-time">${this.now()}</span> <b>Старт сценария</b>${this._demoMode ? ' <span class="log-warn">· демо</span>' : ""}`);
+        const hookTag = opts.fromHook ? ' <span class="log-warn">· webhook</span>' : "";
+        this.log(`<span class="log-time">${this.now()}</span> <b>Старт сценария</b>${this._demoMode ? ' <span class="log-warn">· демо</span>' : ""}${hookTag}`);
         check.warnings.forEach(w => this.log(`<span class="log-warn"><i class="fa-solid fa-triangle-exclamation"></i> ${this.esc(w)}</span>`));
         this.updateRunButton(true);
         document.getElementById("run-status").textContent = (window.I18N && I18N.t("run.status.running")) || "выполняется…";
 
         const ctx = { last: null, vars: {}, proxy: null };
+        if (opts.hook != null) {
+            ctx.vars.hook = opts.hook;
+            ctx.vars.hook_event = opts.hookEvent || "event";
+            ctx.last = opts.hook;
+            this.log(`<span class="log-dim">webhook → vars.hook (${typeof opts.hook === "object" ? Object.keys(opts.hook || {}).slice(0, 6).join(", ") : "…"})</span>`);
+        }
         const counters = {};
         const proxyState = {};
-        const stats = { reqOk: 0, reqErr: 0, notify: 0, saved: 0, spent: 0, startedAt: Date.now() };
+        const stats = { reqOk: 0, reqErr: 0, notify: 0, saved: 0, spent: 0, hardFail: 0, startedAt: Date.now() };
         this._runStats = stats;
         let steps = 0;
+        let runErr = null;
         try {
             ({ steps } = await this._execLoop(startCur, ctx, stats, counters, proxyState, {}));
-            if (steps >= 300) this.log(`<span class="log-err">Достигнут лимит шагов (300) — возможно, зациклено.</span>`);
+            if (steps >= 300) {
+                runErr = "step limit";
+                this.log(`<span class="log-err">Достигнут лимит шагов (300) — возможно, зациклено.</span>`);
+            }
         } catch (err) {
+            runErr = String(err);
             this.log(`<span class="log-err">Сбой выполнения: ${this.esc(String(err))}</span>`);
         }
 
@@ -743,7 +876,8 @@ window.ScenarioRuntimeMixin = {
                 this.updateRunButton(false);
                 document.getElementById("run-status").textContent = (window.I18N && I18N.t("run.status.done")) || "готово";
             }
-            return;
+            this.log(`<span class="log-warn">Сценарий остановлен</span>`);
+            return { ok: false, error: "stopped", aborted: true };
         }
 
         this.running = false;
@@ -756,6 +890,22 @@ window.ScenarioRuntimeMixin = {
         document.getElementById("run-status").textContent = (window.I18N && I18N.t("run.status.done")) || "готово";
         this.log(`<span class="log-time">${this.now()}</span> <b>Сценарий завершён</b> · шагов: ${steps}`);
         this.recordHistory(stats, steps);
+        this._runCompleted = !runErr;
+
+        const response = ctx.vars.hook_response != null
+            ? ctx.vars.hook_response
+            : {
+                ok: !runErr && (stats.reqErr || 0) === 0 && (stats.hardFail || 0) === 0,
+                event: ctx.vars.hook_event || null,
+                last: ctx.last,
+                spent: stats.spent || 0,
+                reqOk: stats.reqOk,
+                reqErr: stats.reqErr,
+            };
+        const topOk = !runErr && (stats.reqErr || 0) === 0 && (stats.hardFail || 0) === 0;
+        const out = { ok: topOk, result: response, error: runErr || (topOk ? null : "scenario errors"), stats, steps };
+        this._lastHookResult = out;
+        return out;
         } finally {
             this._demoMode = false;
         }

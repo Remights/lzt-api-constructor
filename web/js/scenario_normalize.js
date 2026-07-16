@@ -89,7 +89,7 @@
                 out.checker = { itemPath: "last.item_id", rejectSold: true, ...(out.checker || {}) };
                 break;
             case "sniper":
-                out.sniper = { source: "last.items", maxPrice: "100", maxSpend: "500", ...(out.sniper || {}) };
+                out.sniper = { source: "last.items", maxPrice: "100", maxSpend: "5000", ...(out.sniper || {}) };
                 break;
             case "ai":
                 out.ai = {
@@ -98,6 +98,9 @@
                     preset: "steam_batch",
                     ...(out.ai || {}),
                 };
+                break;
+            case "script":
+                out.script = { filename: "hook_example.py", timeout: 30, saveAs: "script_out", ...(out.script || {}) };
                 break;
             case "subscenario":
                 out.subscenario = { templateId: "", ...(out.subscenario || {}) };
@@ -232,9 +235,9 @@
             "Формат scenario.json (координаты x/y НЕ нужны — конструктор расставит блоки сам):",
             '{ "title": "Название", "nodes": [...], "edges": [...] }',
             "nodes[]: { id, type, ...поля типа }. edges[]: { id, from, fromPort, to }.",
-            "Типы: start, request, condition, filter, loop, foreach, variable, delay, notify, savefile, logmsg, proxy, checker, sniper, ai, subscenario, stop.",
-            "Порты: start→out|onerror; request→success|error; condition→true|false; filter→found|empty; loop|foreach→body|done; checker→ok|fail; sniper→bought|skip|fail; остальные→out.",
-            "Подстановки: {{last.items.length}}, {{vars.filtered}}, {{vars.item_id}}.",
+            "Типы: start, request, condition, filter, loop, foreach, variable, delay, notify, savefile, logmsg, proxy, checker, sniper, ai, script, subscenario, stop.",
+            "Порты: start→out|onerror; request→success|error; condition→true|false; filter→found|empty; loop|foreach→body|done; checker→ok|fail; sniper→bought|skip|fail; ai|script→success|error; остальные→out.",
+            "Подстановки: {{last.items.length}}, {{vars.filtered}}, {{vars.hook}}, {{vars.item_id}}.",
             "Пример цепочки: start.out→request→filter.found→notify→delay→(обратно request) или stop.",
         ].join("\n");
     }

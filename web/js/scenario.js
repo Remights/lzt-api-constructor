@@ -20,6 +20,7 @@ const Scenario = {
     running: false,
     _runBusy: false,
     _runToken: null,
+    _runCompleted: false,
     scriptLang: "python",      // выбранный язык скрипта-бота
 
     history: [],               // стек состояний для отмены/повтора
@@ -203,11 +204,16 @@ const Scenario = {
         if (type === "checker") return { checker: { itemPath: "last.items.0.item_id", rejectSold: true } };
         if (type === "sniper") return { sniper: { source: "last.items", maxPrice: "100", maxSpend: "5000", priceField: "price", itemField: "item_id" } };
         if (type === "ai") return { ai: { batch: true, batchLimit: 50, source: "vars.filtered", outputVar: "ai_result", prompt: "Оцени лоты. Верни JSON {\"items\":[{\"item_id\":N,\"buy\":true,\"score\":8,\"reason\":\"...\"}]}", preset: "steam_batch" } };
+        if (type === "script") return { script: { filename: "hook_example.py", timeout: 30, saveAs: "script_out" } };
         if (type === "subscenario") return { subscenario: { templateId: "" } };
         return {};
     },
 
     addNode(type, x, y, data) {
+        if (type !== "start" && this._scenarioIsDemo) {
+            this._scenarioIsDemo = false;
+            this.updateRunHint();
+        }
         const node = Object.assign({ id: this.genId(), type, x, y }, this.defaultData(type), data || {});
         this.nodes.push(node);
         return node;
@@ -330,6 +336,10 @@ const Scenario = {
     deleteNode(id) {
         const node = this.getNode(id);
         if (node && node.type === "start") return; // старт не удаляем
+        if (this._scenarioIsDemo) {
+            this._scenarioIsDemo = false;
+            this.updateRunHint();
+        }
         this.nodes = this.nodes.filter(n => n.id !== id);
         this.edges = this.edges.filter(e => e.from !== id && e.to !== id);
         if (this.selectedNode === id) this.selectedNode = null;
@@ -627,7 +637,8 @@ const Scenario = {
     // ==================== СОХРАНЕНИЕ / ПРИМЕРЫ ====================
 
     serialize() {
-        return { id: this.currentId, title: this.title, seq: this.seq, isDemo: !!this._scenarioIsDemo, view: { scale: this.scale, panX: this.panX, panY: this.panY }, nodes: JSON.parse(JSON.stringify(this.nodes)), edges: JSON.parse(JSON.stringify(this.edges)) };
+        // isDemo не пишем в сохранения — иначе демо «залипает» и webhook/расписание путаются
+        return { id: this.currentId, title: this.title, seq: this.seq, view: { scale: this.scale, panX: this.panX, panY: this.panY }, nodes: JSON.parse(JSON.stringify(this.nodes)), edges: JSON.parse(JSON.stringify(this.edges)) };
     },
 
     // ==================== ЭКСПОРТ / ИМПОРТ В ФАЙЛ ====================
@@ -717,8 +728,8 @@ const Scenario = {
         }
         el.textContent = text;
         el.className = "scn-flash show" + (kind ? " " + kind : "");
-        clearTimeout(this._flashТ);
-        this._flashТ = setTimeout(() => { el.className = "scn-flash"; }, 2600);
+        clearTimeout(this._flashT);
+        this._flashT = setTimeout(() => { el.className = "scn-flash"; }, 2600);
     },
 
     load(data, opts) {
@@ -996,7 +1007,20 @@ const Scenario = {
     },
     esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); },
     now() { const d = new Date(); return d.toLocaleTimeString("ru-RU", { hour12: false }); },
-    sleep(ms) { return new Promise(r => setTimeout(r, ms)); },
+    sleep(ms) {
+        const total = Math.max(0, Number(ms) || 0);
+        if (total <= 0) return Promise.resolve();
+        return new Promise(resolve => {
+            const t0 = Date.now();
+            const step = () => {
+                if (!this.running || this._runToken == null) return resolve();
+                const left = total - (Date.now() - t0);
+                if (left <= 0) return resolve();
+                setTimeout(step, Math.min(120, left));
+            };
+            setTimeout(step, Math.min(120, total));
+        });
+    },
 
     getPath(obj, path) { return window.ScenarioEngine.getPath(obj, path); },
     resolveVars(val, ctx) { return window.ScenarioEngine.resolveVars(val, ctx); },

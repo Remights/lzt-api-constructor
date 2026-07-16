@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import BASE_DIR
-from backend.routes import ai_routes, catalog, market, scenarios, storage, window
+from backend.routes import ai_routes, catalog, hooks, market, scenarios, storage, window
 
 
 def create_app() -> FastAPI:
@@ -31,6 +31,7 @@ def create_app() -> FastAPI:
     app.include_router(window.router)
     app.include_router(storage.router)
     app.include_router(scenarios.router)
+    app.include_router(hooks.router)
 
     app.mount("/", StaticFiles(directory=os.path.join(BASE_DIR, "web"), html=True), name="web")
     return app

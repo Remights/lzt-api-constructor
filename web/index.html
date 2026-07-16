@@ -250,7 +250,7 @@
 
     <!-- Модальное окно настроек -->
     <div id="settings-modal" class="modal-overlay" style="display: none;">
-        <div class="modal-box" style="width: 420px;">
+        <div class="modal-box" style="width: 480px; max-height: 88vh; overflow:auto;">
             <div class="modal-header">
                 <span class="modal-header-title"><i class="fa-solid fa-gear"></i> <span data-i18n="settings.title">Настройки</span></span>
                 <button id="set-close-x" class="modal-close"><i class="fa-solid fa-xmark"></i></button>
@@ -278,6 +278,23 @@
                     <label class="step-toggle"><input type="checkbox" id="set-panel-script" checked> <span data-i18n="settings.panelScript">Скрипт (codegen)</span></label>
                 </div>
                 <button id="set-replay-tour" class="btn-sidebar-action" style="margin-top: 6px;"><i class="fa-solid fa-graduation-cap"></i> <span data-i18n="settings.replayTour">Показать обучение снова</span></button>
+                <div class="form-group settings-hooks" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border-color);">
+                    <label><i class="fa-solid fa-plug" style="color:var(--lzt-green);"></i> Webhooks / хуки</label>
+                    <p class="settings-hint">Внешний софт шлёт JSON сюда → сценарий гоняет блоки → ответ обратно. В сценарии данные в <code>vars.hook</code>, ответ положи в <code>vars.hook_response</code>.</p>
+                    <label class="step-toggle"><input type="checkbox" id="set-hooks-enabled" checked> Принимать webhook</label>
+                    <label class="mini-label" style="margin-top:8px;">URL</label>
+                    <div style="display:flex;gap:6px;">
+                        <input type="text" class="form-control" id="set-hooks-url" readonly style="font-size:11px;">
+                        <button type="button" class="btn-token" id="set-hooks-copy-url" title="Копировать"><i class="fa-solid fa-copy"></i></button>
+                    </div>
+                    <label class="mini-label" style="margin-top:8px;">Secret (заголовок X-LZT-Hook-Secret)</label>
+                    <div style="display:flex;gap:6px;">
+                        <input type="text" class="form-control" id="set-hooks-secret" readonly style="font-size:11px;">
+                        <button type="button" class="btn-token" id="set-hooks-copy-secret" title="Копировать"><i class="fa-solid fa-copy"></i></button>
+                        <button type="button" class="btn-token" id="set-hooks-rotate" title="Новый secret"><i class="fa-solid fa-rotate"></i></button>
+                    </div>
+                    <p class="settings-hint" style="margin-top:8px;">Скрипты (.py/.js): <span id="set-hooks-dir" style="word-break:break-all;"></span></p>
+                </div>
             </div>
             <div class="modal-footer" style="justify-content: flex-end; display: flex;">
                 <button id="set-close" class="btn-save" data-i18n="settings.close">Закрыть</button>
@@ -468,6 +485,7 @@
     <script src="js/assistant.js"></script>
     <script src="js/ai_plus.js"></script>
     <script src="js/features.js"></script>
+    <script src="js/hooks.js"></script>
     <script src="js/panels.js"></script>
     <script src="js/app.js"></script>
 </body>

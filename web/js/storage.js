@@ -7,6 +7,7 @@
     let hydratePromise = null;
     let flushTimer = null;
     let flushing = false;
+    let dirtyWhileFlush = false;
 
     function collect() {
         const data = {};
@@ -90,20 +91,29 @@
     }
 
     async function flush() {
-        if (flushing) return;
+        if (flushing) {
+            dirtyWhileFlush = true;
+            return;
+        }
         flushing = true;
+        dirtyWhileFlush = false;
         try {
             await persistRemote(collect());
         } finally {
             flushing = false;
+            if (dirtyWhileFlush) {
+                dirtyWhileFlush = false;
+                scheduleFlush();
+            }
         }
     }
 
     function flushSync() {
         const payload = JSON.stringify(collect());
+        const blob = new Blob([payload], { type: "application/json" });
         try {
             if (navigator.sendBeacon) {
-                navigator.sendBeacon("/api/user-storage", new Blob([payload], { type: "application/json" }));
+                navigator.sendBeacon("/api/user-storage", blob);
                 return;
             }
         } catch (e) { /* ignore */ }

@@ -49,8 +49,21 @@ def save_all(data: dict[str, Any]) -> None:
             continue
         cleaned[k] = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
     with _LOCK:
+        merged: dict[str, str] = {}
+        if os.path.isfile(_STORAGE_FILE):
+            try:
+                with open(_STORAGE_FILE, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                if isinstance(raw, dict):
+                    for k, v in raw.items():
+                        if not isinstance(k, str) or not k.startswith(_PREFIX) or v is None:
+                            continue
+                        merged[k] = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
+            except (OSError, json.JSONDecodeError):
+                merged = {}
+        merged.update(cleaned)
         os.makedirs(os.path.dirname(_STORAGE_FILE), exist_ok=True)
         tmp = _STORAGE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(cleaned, f, ensure_ascii=False, indent=2)
+            json.dump(merged, f, ensure_ascii=False, indent=2)
         os.replace(tmp, _STORAGE_FILE)
