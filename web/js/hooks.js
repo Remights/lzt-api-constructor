@@ -84,11 +84,18 @@
         }
     }
 
+    function hookHeaders(extra) {
+        const h = Object.assign({ "Content-Type": "application/json" }, extra || {});
+        const sec = infoCache?.secret || document.getElementById("set-hooks-secret")?.value || "";
+        if (sec) h["X-LZT-Hook-Secret"] = sec;
+        return h;
+    }
+
     async function processJob(job) {
         if (!window.Scenario) {
             await fetch(`/api/hooks/complete/${job.id}`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: hookHeaders(),
                 body: JSON.stringify({ ok: false, error: "Scenario UI not ready" }),
             });
             return;
@@ -106,7 +113,7 @@
             });
             await fetch(`/api/hooks/complete/${job.id}`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: hookHeaders(),
                 body: JSON.stringify({
                     ok: !!(out && out.ok),
                     result: out?.result ?? null,
@@ -116,7 +123,7 @@
         } catch (e) {
             await fetch(`/api/hooks/complete/${job.id}`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: hookHeaders(),
                 body: JSON.stringify({ ok: false, error: String(e) }),
             });
         }
@@ -127,7 +134,8 @@
         if (window.Scenario?._runBusy) return;
         busy = true;
         try {
-            const r = await fetch("/api/hooks/pending");
+            if (!infoCache?.secret) await fetchInfo();
+            const r = await fetch("/api/hooks/pending", { headers: hookHeaders() });
             const data = await r.json();
             if (data?.job) await processJob(data.job);
         } catch (e) { /* offline */ }

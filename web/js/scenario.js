@@ -62,7 +62,7 @@ const Scenario = {
                 const st = JSON.parse(tabsRaw);
                 const tab = st && st.tabs && st.tabs[st.active];
                 if (tab && tab.data && Array.isArray(tab.data.nodes) && tab.data.nodes.length) {
-                    this.load(tab.data, { keepView: true });
+                    this.load(tab.data, { keepView: true, demo: !!tab.demoMode });
                     this.maybeStartTour();
                     window.dispatchEvent(new Event("lzt-scenario-ready"));
                     return;
@@ -202,7 +202,7 @@ const Scenario = {
         if (type === "start") return { start: { globalError: true } };
         if (type === "foreach") return { foreach: { source: "last.items", itemVar: "item", indexVar: "i" } };
         if (type === "checker") return { checker: { itemPath: "last.items.0.item_id", rejectSold: true } };
-        if (type === "sniper") return { sniper: { source: "last.items", maxPrice: "100", maxSpend: "5000", priceField: "price", itemField: "item_id" } };
+        if (type === "sniper") return { sniper: { source: "last.items", maxPrice: "100", maxSpend: "5000", priceField: "price", itemField: "item_id", dryRun: true, confirmBuy: true } };
         if (type === "ai") return { ai: { batch: true, batchLimit: 50, source: "vars.filtered", outputVar: "ai_result", prompt: "Оцени лоты. Верни JSON {\"items\":[{\"item_id\":N,\"buy\":true,\"score\":8,\"reason\":\"...\"}]}", preset: "steam_batch" } };
         if (type === "script") return { script: { filename: "hook_example.py", timeout: 30, saveAs: "script_out" } };
         if (type === "subscenario") return { subscenario: { templateId: "" } };
@@ -316,13 +316,32 @@ const Scenario = {
         if (!data) return;
         if (!opts.force && this.hasMeaningfulWork() && window.LZTFeatures?.openScenarioInNewTab) {
             window.LZTFeatures.openScenarioInNewTab(data, opts);
+            this._scenarioIsDemo = !!(opts.demo || data.isDemo || data._demo);
             if (opts.flash !== false) this.flash("Загружен: " + (data.title || "Сценарий"), "ok");
+            if (opts.pulseDemo) this._pulseDemoTargets();
             return;
         }
         this._scenarioIsDemo = !!(opts.demo || data.isDemo || data._demo);
         this.load(data, { keepView: !!opts.keepView, demo: this._scenarioIsDemo });
         this.commit();
         if (opts.flash !== false) this.flash("Загружен: " + (data.title || "Сценарий"), "ok");
+        if (opts.pulseDemo) this._pulseDemoTargets();
+    },
+
+    _pulseDemoTargets() {
+        this.scriptLang = "python";
+        const langSel = document.getElementById("script-lang");
+        if (langSel) langSel.value = "python";
+        this.regenScript();
+        const runBtn = document.getElementById("btn-run-scenario");
+        const botBox = document.getElementById("script-output")?.closest(".panel-section")
+            || document.getElementById("script-output")?.parentElement;
+        [runBtn, botBox].forEach((el) => {
+            if (!el) return;
+            el.classList.add("contest-demo-pulse");
+            setTimeout(() => el.classList.remove("contest-demo-pulse"), 4500);
+        });
+        botBox?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
     },
 
     openDemoExample() {
@@ -330,7 +349,7 @@ const Scenario = {
         if (!ex) return;
         document.querySelector('#scenario-examples-list .tpl-row[data-tour-id="demo"]')
             ?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-        return this.openScenario(ex.build(), { demo: true });
+        return this.openScenario(ex.build(), { demo: true, pulseDemo: true });
     },
 
     deleteNode(id) {
@@ -633,6 +652,39 @@ const Scenario = {
         return keys.slice(0, 3).join(", ");
     },
 
+    /** Краткий human-итог для мини-теста ноды */
+    humanTestSummary(data, meta) {
+        meta = meta || {};
+        if (meta.error) return String(meta.error);
+        if (meta.nodeType === "ai") {
+            if (meta.aiOk === false) return "Ответ ИИ не JSON";
+            if (!data) return "Пустой ответ ИИ";
+            const items = Array.isArray(data.items) ? data.items.length : 0;
+            if (items) return `JSON ok · ${items} items`;
+            return `JSON ok · ${this.summary(data) || "объект"}`;
+        }
+        if (!data) return "Пустой ответ";
+        if (Array.isArray(data.threads)) {
+            const n = data.threads.length;
+            const t0 = data.threads[0];
+            const title = t0 && (t0.thread_title || t0.title || t0.thread_id);
+            return n
+                ? `Вернулось ${n} тем.${title != null ? ` Первая: «${String(title).slice(0, 60)}»` : ""}`
+                : "Тем нет (0)";
+        }
+        if (Array.isArray(data.items)) {
+            const n = data.items.length;
+            const it = data.items[0];
+            if (!n) return "Лотов нет (0)";
+            const title = it && (it.title || it.item_title || it.item_id);
+            const price = it && it.price != null ? ` · ${it.price}₽` : "";
+            return `Вернулось ${n} лотов. Первый: «${String(title || "?").slice(0, 50)}»${price}`;
+        }
+        if (data.user) return `Профиль: ${data.user.username || data.user.user_id || "ok"}`;
+        if (meta.httpCode) return `HTTP ${meta.httpCode} · ${this.summary(data) || "ok"}`;
+        return this.summary(data) || "Готово";
+    },
+
 
     // ==================== СОХРАНЕНИЕ / ПРИМЕРЫ ====================
 
@@ -874,48 +926,38 @@ const Scenario = {
     },
 
     examples() {
+        const D = window.LZTDemo;
         return [
             {
-                id: "demo", title: "Демо: поиск → снайпер", icon: "fa-solid fa-flask",
-                desc: "Готовый сценарий с mock API — без токена",
-                build: () => (window.LZTDemo ? window.LZTDemo.buildDemoScenario() : { title: "Демо", nodes: [{ id: "n1", type: "start", x: 40, y: 220 }], edges: [] }),
+                id: "demo", title: "Демо за 1 мин", icon: "fa-solid fa-flask",
+                desc: "Поиск → фильтр → dry-run снайпер (mock API, без токена) → смотрите Python справа",
+                build: () => (D ? D.buildDemoScenario() : { title: "Демо", nodes: [{ id: "n1", type: "start", x: 40, y: 220 }], edges: [] }),
             },
             {
-                title: "Умный снайпер (ИИ)", icon: "fa-solid fa-brain",
-                desc: "Поиск → фильтр → ИИ-оценка → снайпер",
-                build: () => (window.LZTDemo ? window.LZTDemo.buildSmartSniperScenario() : { title: "Умный снайпер", nodes: [{ id: "n1", type: "start", x: 40, y: 220 }], edges: [] }),
+                id: "cheap", title: "Поиск дешёвых Steam", icon: "fa-brands fa-steam",
+                desc: "GET /steam → фильтр по цене → лог. Скачал → токен → Запустить",
+                build: () => (D ? D.buildCheapScenario() : { title: "Поиск дешёвых", nodes: [{ id: "n1", type: "start", x: 40, y: 220 }], edges: [] }),
             },
             {
-                title: "Поиск дешёвых Steam-аккаунтов", icon: "fa-brands fa-steam",
-                desc: "Ищет аккаунты Steam и проверяет, есть ли результаты",
-                build: () => ({
-                    title: "Поиск дешёвых Steam-аккаунтов",
-                    nodes: [
-                        { id: "n1", type: "start", x: 40, y: 220 },
-                        { id: "n2", type: "request", x: 300, y: 200, request: { method: "GET", url: "https://prod-api.lzt.market/steam", params: { pmin: "1", pmax: "100", order_by: "price_to_up" }, body: null, headers: {}, title: "Поиск Steam до 100₽" } },
-                        { id: "n3", type: "condition", x: 640, y: 200, condition: { left: "last.items.length", op: ">", right: "0" } },
-                        { id: "n4", type: "stop", x: 960, y: 120 },
-                        { id: "n5", type: "stop", x: 960, y: 300 },
-                    ],
-                    edges: [
-                        { id: "e1", from: "n1", fromPort: "out", to: "n2" },
-                        { id: "e2", from: "n2", fromPort: "success", to: "n3" },
-                        { id: "e3", from: "n3", fromPort: "true", to: "n4" },
-                        { id: "e4", from: "n3", fromPort: "false", to: "n5" },
-                    ],
-                    view: { scale: 0.9, panX: 30, panY: 20 }
-                })
+                id: "bump", title: "Bump лотов", icon: "fa-solid fa-arrow-up",
+                desc: "POST /user/bump — поднять все активные лоты",
+                build: () => (D ? D.buildBumpScenario() : { title: "Bump", nodes: [{ id: "n1", type: "start", x: 40, y: 220 }], edges: [] }),
+            },
+            {
+                id: "checker", title: "Чекер лота", icon: "fa-solid fa-user-check",
+                desc: "Поиск → взять item_id → проверка «не продан»",
+                build: () => (D ? D.buildCheckerScenario() : { title: "Чекер", nodes: [{ id: "n1", type: "start", x: 40, y: 220 }], edges: [] }),
             },
             {
                 title: "Автопокупка первого лота", icon: "fa-solid fa-cart-shopping",
-                desc: "Ищет лот и, если есть, берёт item_id первого и вызывает fast-buy",
+                desc: "Поиск → sniper dry-run (по умолчанию без реальной покупки; снимите Dry-run для live)",
                 build: () => ({
                     title: "Автопокупка первого лота",
                     nodes: [
                         { id: "n1", type: "start", x: 40, y: 260 },
                         { id: "n2", type: "request", x: 280, y: 240, request: { method: "GET", url: "https://prod-api.lzt.market/steam", params: { pmin: "1", pmax: "50", order_by: "price_to_up" }, body: null, headers: {}, title: "Поиск лота" } },
                         { id: "n3", type: "condition", x: 600, y: 240, condition: { left: "last.items.length", op: ">", right: "0" } },
-                        { id: "n4", type: "request", x: 900, y: 160, request: { method: "POST", url: "https://prod-api.lzt.market/{{last.items.0.item_id}}/fast-buy", params: {}, body: null, headers: {}, title: "Купить первый лот" } },
+                        { id: "n4", type: "sniper", x: 900, y: 160, sniper: { source: "last.items", maxPrice: "50", maxSpend: "500", priceField: "price", itemField: "item_id", dryRun: true, confirmBuy: true } },
                         { id: "n5", type: "stop", x: 1240, y: 160 },
                         { id: "n6", type: "delay", x: 600, y: 420, delay: { ms: 5000 } },
                     ],
@@ -923,7 +965,8 @@ const Scenario = {
                         { id: "e1", from: "n1", fromPort: "out", to: "n2" },
                         { id: "e2", from: "n2", fromPort: "success", to: "n3" },
                         { id: "e3", from: "n3", fromPort: "true", to: "n4" },
-                        { id: "e4", from: "n4", fromPort: "success", to: "n5" },
+                        { id: "e4", from: "n4", fromPort: "bought", to: "n5" },
+                        { id: "e4b", from: "n4", fromPort: "skip", to: "n5" },
                         { id: "e5", from: "n3", fromPort: "false", to: "n6" },
                         { id: "e6", from: "n6", fromPort: "out", to: "n2" },
                     ],
@@ -949,7 +992,7 @@ const Scenario = {
                 })
             },
             {
-                title: "Монитор дешёвых Steam → Telegram", icon: "fa-solid fa-bell",
+                title: "Монитор Steam → Telegram", icon: "fa-solid fa-bell",
                 desc: "Каждые 60с ищет дешёвые аккаунты, фильтрует по цене и шлёт уведомление в Telegram",
                 build: () => ({
                     title: "Монитор Steam → Telegram",
@@ -969,6 +1012,30 @@ const Scenario = {
                         { id: "e6", from: "n5", fromPort: "out", to: "n2" },
                     ],
                     view: { scale: 0.75, panX: 20, panY: 10 }
+                })
+            },
+            {
+                id: "forum-monitor", title: "Монитор тем раздела", icon: "fa-solid fa-comments",
+                desc: "GET /threads?forum_id= — новые темы форума (не автоответчик)",
+                build: () => ({
+                    title: "Монитор тем раздела",
+                    nodes: [
+                        { id: "n1", type: "start", x: 40, y: 240 },
+                        { id: "n2", type: "request", x: 280, y: 220, request: { method: "GET", url: "https://api.lolz.live/threads", params: { forum_id: "1" }, body: null, headers: {}, title: "Темы раздела", retries: 2, retryDelay: 2000, timeout: 20, respectRateLimit: true } },
+                        { id: "n3", type: "condition", x: 600, y: 220, condition: { left: "last.threads.length", op: ">", right: "0" } },
+                        { id: "n4", type: "notify", x: 900, y: 140, notify: { channel: "telegram", tgToken: "", tgChat: "", discordUrl: "", text: "Новых тем: {{last.threads.length}}" } },
+                        { id: "n5", type: "delay", x: 600, y: 400, delay: { ms: 120000 } },
+                        { id: "n6", type: "stop", x: 900, y: 320 },
+                    ],
+                    edges: [
+                        { id: "e1", from: "n1", fromPort: "out", to: "n2" },
+                        { id: "e2", from: "n2", fromPort: "success", to: "n3" },
+                        { id: "e3", from: "n3", fromPort: "true", to: "n4" },
+                        { id: "e4", from: "n3", fromPort: "false", to: "n5" },
+                        { id: "e5", from: "n4", fromPort: "out", to: "n5" },
+                        { id: "e6", from: "n5", fromPort: "out", to: "n2" },
+                    ],
+                    view: { scale: 0.8, panX: 20, panY: 10 }
                 })
             },
             {
@@ -993,7 +1060,12 @@ const Scenario = {
                     ],
                     view: { scale: 0.72, panX: 20, panY: 10 }
                 })
-            }
+            },
+            {
+                id: "smart", title: "Умный снайпер (ИИ)", icon: "fa-solid fa-brain",
+                desc: "Поиск → фильтр → ИИ-оценка → dry-run снайпер",
+                build: () => (D ? D.buildSmartSniperScenario() : { title: "Умный снайпер", nodes: [{ id: "n1", type: "start", x: 40, y: 220 }], edges: [] }),
+            },
         ];
     },
 

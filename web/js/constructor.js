@@ -953,3 +953,5 @@ const Constructor = {
         this.sync();
     }
 };
+
+window.Constructor = Constructor;

@@ -49,6 +49,24 @@ def check_proxies_endpoint(payload: ProxyCheckPayload):
     return check_proxies(payload.proxies, payload.test_url, min(max(payload.timeout or 8, 1), 120))
 
 
+@router.post("/api/import-url")
+def import_url_endpoint(payload: UrlPayload):
+    """Скачать JSON/LZT1 сценарий по URL (SSRF-safe)."""
+    import requests as req_lib
+
+    ok, reason = is_safe_url(payload.url)
+    if not ok:
+        return {"ok": False, "error": reason}
+    try:
+        r = req_lib.get(payload.url.strip(), timeout=20, headers={"Accept": "application/json,text/plain,*/*"})
+        text = r.text or ""
+        if r.status_code >= 400:
+            return {"ok": False, "error": f"HTTP {r.status_code}"}
+        return {"ok": True, "content": text[:2_000_000], "content_type": r.headers.get("content-type", "")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @router.post("/api/open-browser")
 def open_browser_endpoint(payload: UrlPayload):
     ok, reason = is_safe_url(payload.url)

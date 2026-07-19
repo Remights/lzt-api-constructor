@@ -203,16 +203,20 @@
         const saveFmt = /json/.test(t) ? "json" : "csv";
         const wantFilter = /(фильтр|отфильтр|оставь|только те)/.test(t);
         const interval = detectInterval(t);
+        const isForum = /(форум|forum|тем[аыуе]|thread|threads|раздел|автоответ|отвечать на тем|zelenka|lolz\.live|монитор тем)/.test(t);
+        const forumId = detectNumberAfter(t, ["forum_id", "forum id", "раздел(?:е|а)?", "форум(?:е|а)?"]);
 
-        // категория: notify-цель телеграма не должна съедать категорию
+        // категория: notify-цель телеграма не должна съедать категорию; для форума — не дефолтим steam
         let category = null;
-        for (const c of CATEGORIES) {
-            if (c.kw.some(k => t.includes(k))) {
-                if ((c.slug === "telegram" || c.slug === "discord") && (wantNotifyTg || wantNotifyDs) && !/(ищ|найд|парс|поиск|купи|аккаунт\w* (telegram|телеграм))/.test(t)) continue;
-                category = c.slug; break;
+        if (!isForum) {
+            for (const c of CATEGORIES) {
+                if (c.kw.some(k => t.includes(k))) {
+                    if ((c.slug === "telegram" || c.slug === "discord") && (wantNotifyTg || wantNotifyDs) && !/(ищ|найд|парс|поиск|купи|аккаунт\w* (telegram|телеграм))/.test(t)) continue;
+                    category = c.slug; break;
+                }
             }
         }
-        const isBalance = /(баланс|профил|мой аккаунт|\bme\b|кошел)/.test(t);
+        const isBalance = !isForum && /(баланс|профил|мой аккаунт|\bme\b|кошел)/.test(t);
 
         // короткие предлоги «до»/«от»/«мин» ограничиваем, чтобы не ловить «дороже»/«минут»
         const pmax = detectNumberAfter(t, ["дешевле", "до(?![а-яё])", "ниже", "меньше", "<=", "max", "макс"]);
@@ -231,32 +235,54 @@
         nodes.push(start);
 
         // запрос
-        const params = {};
-        if (pmax != null) params.pmax = String(pmax);
-        if (pmin != null) params.pmin = String(pmin);
-        if (!isBalance) params.order_by = "price_to_up";
-        const url = isBalance ? "https://prod-api.lzt.market/me" : ("https://prod-api.lzt.market/" + (category || "steam"));
-        const req = {
-            id: nid(), type: "request", x: 340, y: 240,
-            request: {
-                method: "GET", url, params, body: null, headers: {},
-                title: isBalance ? "Мой профиль/баланс" : ("Поиск " + (category || "steam")),
-                retries: 2, retryDelay: 1500, timeout: 20, respectRateLimit: true
-            }
-        };
+        let req;
+        if (isForum) {
+            const params = { forum_id: String(forumId || 1) };
+            req = {
+                id: nid(), type: "request", x: 340, y: 240,
+                request: {
+                    method: "GET",
+                    url: "https://api.lolz.live/threads",
+                    params, body: null, headers: {},
+                    title: "Монитор тем форума",
+                    retries: 2, retryDelay: 1500, timeout: 20, respectRateLimit: true
+                }
+            };
+        } else {
+            const params = {};
+            if (pmax != null) params.pmax = String(pmax);
+            if (pmin != null) params.pmin = String(pmin);
+            if (!isBalance) params.order_by = "price_to_up";
+            const url = isBalance ? "https://prod-api.lzt.market/me" : ("https://prod-api.lzt.market/" + (category || "steam"));
+            req = {
+                id: nid(), type: "request", x: 340, y: 240,
+                request: {
+                    method: "GET", url, params, body: null, headers: {},
+                    title: isBalance ? "Мой профиль/баланс" : ("Поиск " + (category || "steam")),
+                    retries: 2, retryDelay: 1500, timeout: 20, respectRateLimit: true
+                }
+            };
+        }
         nodes.push(req);
         link(start.id, "out", req.id);
 
         let lastId = req.id;
         let lastPort = "success";
         let x = 640;
+        const listPath = isForum ? "last.threads" : "last.items";
 
         // фильтр
         let filterNode = null;
-        if ((wantFilter || pmax != null) && !isBalance) {
+        if ((wantFilter || (!isForum && pmax != null)) && !isBalance) {
             filterNode = {
                 id: nid(), type: "filter", x, y: 240,
-                filter: { source: "last.items", field: "price", op: pmax != null ? "<=" : ">=", value: String(pmax != null ? pmax : (pmin != null ? pmin : 1000)), saveAs: "filtered" }
+                filter: {
+                    source: listPath,
+                    field: isForum ? "title" : "price",
+                    op: isForum ? "contains" : (pmax != null ? "<=" : ">="),
+                    value: isForum ? "" : String(pmax != null ? pmax : (pmin != null ? pmin : 1000)),
+                    saveAs: "filtered"
+                }
             };
             nodes.push(filterNode);
             link(lastId, lastPort, filterNode.id);
@@ -265,7 +291,7 @@
         }
 
         // действия (уведомление / сохранение)
-        const actionSrc = filterNode ? "vars.filtered" : "last.items";
+        const actionSrc = filterNode ? "vars.filtered" : listPath;
         let y = 160;
         let chainId = lastId, chainPort = lastPort;
         const addAction = (node) => {
@@ -274,24 +300,24 @@
             chainId = node.id; chainPort = "out";
             x += 300;
         };
+        const countLabel = isForum ? "тем" : "лотов";
         if (wantNotifyTg || (!wantNotifyDs && !wantSave && /(увед|пришл|шл[иёе]|оповест)/.test(t))) {
             addAction({ id: nid(), type: "notify", x, y,
-                notify: { channel: "telegram", tgToken: "", tgChat: "", discordUrl: "", text: "Найдено {{" + actionSrc + ".length}} лотов!" } });
+                notify: { channel: "telegram", tgToken: "", tgChat: "", discordUrl: "", text: "Найдено {{" + actionSrc + ".length}} " + countLabel + "!" } });
         }
         if (wantNotifyDs) {
             addAction({ id: nid(), type: "notify", x, y,
-                notify: { channel: "discord", tgToken: "", tgChat: "", discordUrl: "", text: "Найдено {{" + actionSrc + ".length}} лотов!" } });
+                notify: { channel: "discord", tgToken: "", tgChat: "", discordUrl: "", text: "Найдено {{" + actionSrc + ".length}} " + countLabel + "!" } });
         }
         if (wantSave) {
             addAction({ id: nid(), type: "savefile", x, y,
-                savefile: { source: actionSrc, format: saveFmt, filename: (category || "results") } });
+                savefile: { source: actionSrc, format: saveFmt, filename: (isForum ? "forum_threads" : (category || "results")) } });
         }
 
         // цикл по времени
         if (interval) {
             const delay = { id: nid(), type: "delay", x: 640, y: 460, delay: { ms: interval } };
             nodes.push(delay);
-            // после действий → задержка → снова запрос
             link(chainId, chainPort, delay.id);
             if (filterNode) link(filterNode.id, "empty", delay.id);
             link(delay.id, "out", req.id);
@@ -309,26 +335,48 @@
     }
 
     // Системный промпт для API-режима: описываем схему scenario.json
+    function scenarioContextHint() {
+        const S = window.Scenario;
+        if (!S?.nodes?.length) return "";
+        const types = S.nodes.map(n => n.type).filter(Boolean);
+        const vars = (window.LZTPathPicker?.collectKnownVars?.(S) || []).map(v => v.name);
+        const lines = [
+            "Текущий сценарий (контекст):",
+            "- блоки: " + types.join(", "),
+        ];
+        if (vars.length) lines.push("- известные vars: " + vars.map(v => "vars." + v).join(", "));
+        const reqs = S.nodes.filter(n => n.type === "request" && n.request?.url).map(n => `${n.request.method || "GET"} ${n.request.url}`);
+        if (reqs.length) lines.push("- запросы: " + reqs.slice(0, 5).join(" | "));
+        return lines.join("\n");
+    }
+
     function aiSystemPrompt() {
         const schema = window.ScenarioNormalize?.scenarioJsonPrompt
             ? window.ScenarioNormalize.scenarioJsonPrompt()
             : "";
+        const ctx = scenarioContextHint();
         return [
             "Ты — генератор scenario.json для визуального конструктора LOLZTEAM API.",
             "Верни СТРОГО один валидный JSON без markdown и пояснений.",
             schema,
             "Правила:",
             "- Всегда одна нода type:\"start\" (id n1 или n_start).",
-            "- request.url: https://prod-api.lzt.market/<категория> или /me для баланса.",
+            "- Market request.url: https://prod-api.lzt.market/<категория> или /me для баланса.",
+            "- Forum request.url: https://api.lolz.live/… или https://api.zelenka.guru/… (threads, posts, forums, users).",
+            "- Форум: список тем GET /threads?forum_id=N; ответ в last.threads (НЕ last.items).",
+            "- Маркет: поиск GET /steam и др.; ответ в last.items.",
+            "- Если в запросе форум/темы/раздел/автоответ — НЕ используй prod-api.lzt.market/steam и last.items.",
             "- Категории Маркета: steam, telegram, discord, fortnite, mihoyo (Genshin), riot (Valorant), socialclub (GTA), roblox, minecraft, epicgames и др. — НЕ genshin-impact, gta5, valorant.",
             "- request: {method,url,params,body,headers,title,retries,retryDelay,timeout,respectRateLimit}.",
             "- filter: {source,field,op,value,saveAs}; notify: {channel,tgToken,tgChat,discordUrl,text}.",
             "- delay: {ms}; loop: {times}; variable: {name,path}; savefile: {source,format,filename}.",
+            "- condition.left: last.threads.length / last.items.length / vars.*; ai.source: last.threads или vars.filtered.",
             "- Соединяй edges логично: start.fromPort=\"out\" → request; request.fromPort=\"success\" → дальше.",
             "- Для мониторинга: ... → delay → обратно на request (цикл). Иначе заверши stop.",
             "- НЕ указывай x, y, view — раскладку сделает конструктор.",
             "- Уникальные id для nodes и edges (n1,n2… e1,e2…).",
-        ].join("\n");
+            ctx ? ("\n" + ctx) : "",
+        ].filter(Boolean).join("\n");
     }
 
     function repairJsonString(s) {
@@ -403,7 +451,7 @@
     }
 
     // Бесплатный AI через серверную прокладку (ключи Groq только на сервере)
-    let lztClientFp = "LZTConstruct/1.2.0";
+    let lztClientFp = "LZTConstruct/1.3.0";
     let freeAiUrl = "/api/ai/free";
     let freeAiLimit = 15;
     let freeAiRemaining = null;
@@ -481,6 +529,7 @@
     }
 
     async function aiCallFree(prompt, system) {
+        const license = (localStorage.getItem("lzt_pro_license") || "").trim();
         const res = await fetch(resolveFreeAiUrl(), {
             method: "POST",
             headers: {
@@ -491,6 +540,7 @@
                 prompt,
                 system: system || aiSystemPrompt(),
                 model: getFreeModel(),
+                license_key: license,
             }),
         });
         const data = await res.json();
@@ -741,9 +791,10 @@
                 if (S.hasMeaningfulWork && S.hasMeaningfulWork() && !await LZTDialog.confirm("Заменить текущий сценарий сгенерированным?", { title: "AI-сценарий", okText: "Заменить", danger: true })) return;
                 S.load(sc);
                 close();
-                if (S.flash) S.flash("Сценарий собран AI-ассистентом", "ok");
+                if (S.flash) S.flash("Сценарий собран AI — проверьте блоки перед запуском", "ok");
+                setTimeout(() => S.flash && S.flash("AI может ошибаться: сверьте URL, связи и условия", "ok"), 2600);
                 if (mode === "free" && (/(телеграм|telegram|тг|discord|дискорд)/i.test(text))) {
-                    setTimeout(() => S.flash && S.flash("Не забудьте вписать токен/чат в блоке «Уведомление»", "ok"), 2800);
+                    setTimeout(() => S.flash && S.flash("Не забудьте вписать токен/чат в блоке «Уведомление»", "ok"), 4800);
                 }
             } catch (e) {
                 updateLimit();

@@ -15,6 +15,25 @@ _ENABLED = True
 _MAX_JOBS = 80
 _DEFAULT_WAIT = 45
 _MAX_WAIT = 120
+_EVENT_LIMIT = 60
+_EVENT_WINDOW = 60.0
+_EVENT_HITS: Dict[str, list] = {}
+
+
+def check_event_rate(client_ip: str) -> Tuple[bool, int]:
+    """Лимит POST /event: N запросов в минуту с одного IP. Returns (ok, retry_after_sec)."""
+    now = time.time()
+    ip = (client_ip or "unknown").strip() or "unknown"
+    with _LOCK:
+        hits = _EVENT_HITS.setdefault(ip, [])
+        cutoff = now - _EVENT_WINDOW
+        while hits and hits[0] < cutoff:
+            hits.pop(0)
+        if len(hits) >= _EVENT_LIMIT:
+            retry = int(max(1, _EVENT_WINDOW - (now - hits[0])))
+            return False, retry
+        hits.append(now)
+        return True, 0
 
 
 def ensure_secret() -> str:

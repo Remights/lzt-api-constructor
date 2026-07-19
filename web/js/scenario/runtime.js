@@ -26,13 +26,22 @@ window.ScenarioRuntimeMixin = {
             langSel.value = this.scriptLang;
             langSel.addEventListener("change", () => { this.scriptLang = langSel.value; this.regenScript(); });
         }
-        document.getElementById("btn-copy-script")?.addEventListener("click", () => {
-            navigator.clipboard.writeText(document.getElementById("script-output").textContent);
+        document.getElementById("btn-copy-script")?.addEventListener("click", async () => {
+            const lim = this.codegenLimitations?.() || [];
+            if (lim.length && window.LZTDialog?.confirm) {
+                const ok = await LZTDialog.confirm(
+                    `В коде есть заглушки для: ${lim.map((l) => l.label).join(", ")}. Копировать всё равно?`,
+                    { title: "Экспорт неполный", okText: "Копировать", danger: false }
+                );
+                if (!ok) return;
+            }
             const b = document.getElementById("btn-copy-script");
+            navigator.clipboard.writeText(document.getElementById("script-output").textContent);
+            if (!b) return;
             const t = (k, fb) => (window.I18N && I18N.t(k)) || fb;
             const o = b.innerHTML;
             b.innerHTML = `<i class="fa-solid fa-check"></i> ${t("bot.copied", "Готово")}`;
-            setTimeout(() => b.innerHTML = o, 1500);
+            setTimeout(() => { b.innerHTML = o; }, 1500);
         });
     },
 
@@ -297,12 +306,28 @@ window.ScenarioRuntimeMixin = {
 
     _lztBuyOk(result) {
         if (!result?.success) return false;
+        const E = window.ScenarioEngine;
+        if (E?.lztResponseOk) return E.lztResponseOk(result.status_code || 0, result.data);
         if ((result.status_code || 0) >= 400) return false;
         const d = result.data;
         if (!d || typeof d !== "object") return false;
         if (Array.isArray(d.errors) && d.errors.length) return false;
         if (d.error) return false;
         return true;
+    },
+
+    _isRetryRequest(data) {
+        return !!(window.ScenarioEngine?.isRetryRequest?.(data));
+    },
+
+    _hashStr(s) {
+        let h = 2166136261;
+        const str = String(s || "");
+        for (let i = 0; i < str.length; i++) {
+            h ^= str.charCodeAt(i);
+            h = Math.imul(h, 16777619);
+        }
+        return (h >>> 0).toString(16);
     },
 
     async scenarioAiCall(prompt, system) {
@@ -327,7 +352,7 @@ window.ScenarioRuntimeMixin = {
             if (!data.success) throw new Error(data.error || "Ошибка ИИ");
             return data.content;
         }
-        let fp = "LZTConstruct/1.2.0";
+        let fp = "LZTConstruct/1.3.0";
         try {
             const cr = await fetch("/api/config", { headers: { "X-LZT-Client": fp } });
             const cfg = await cr.json();
@@ -375,13 +400,15 @@ window.ScenarioRuntimeMixin = {
 
     // Универсальный исполнитель графа (основной сценарий + под-сценарии)
     async _execLoop(initialCur, ctx, stats, counters, proxyState, opts) {
-        opts = Object.assign({ maxSteps: 300, silent: false, label: "" }, opts || {});
+        opts = Object.assign({ maxSteps: 2000, silent: false, label: "" }, opts || {});
         const savedNodes = this.nodes;
         const savedEdges = this.edges;
         if (opts.nodes) this.nodes = opts.nodes;
         if (opts.edges) this.edges = opts.edges;
         let cur = initialCur;
         let steps = 0;
+        let lastId = null;
+        let sameStreak = 0;
         if (opts.label) {
             this.log(`<span class="log-time">${this.now()}</span> <i class="fa-solid fa-layer-group"></i> Под-сценарий: <b>${this.esc(opts.label)}</b>`);
         }
@@ -389,6 +416,16 @@ window.ScenarioRuntimeMixin = {
             const myToken = this._runToken;
             while (cur && this.running && this._runToken === myToken && steps < opts.maxSteps) {
                 steps++;
+                if (cur === lastId) {
+                    sameStreak++;
+                    if (sameStreak >= 80) {
+                        this.log(`<span class="log-err">Похоже на цикл: блок <code>${this.esc(String(cur))}</code> повторяется без прогресса.</span>`);
+                        break;
+                    }
+                } else {
+                    lastId = cur;
+                    sameStreak = 0;
+                }
                 const node = this.getNode(cur);
                 if (!node) break;
                 if (!opts.silent) {
@@ -398,6 +435,9 @@ window.ScenarioRuntimeMixin = {
                     await this.sleep(80);
                 }
                 cur = await this._execNode(node, ctx, stats, counters, proxyState, opts);
+            }
+            if (steps >= opts.maxSteps) {
+                this.log(`<span class="log-err">Достигнут лимит шагов (${opts.maxSteps}).</span>`);
             }
         } finally {
             this.nodes = savedNodes;
@@ -420,6 +460,11 @@ window.ScenarioRuntimeMixin = {
                         const token = window.LZTToken?.get?.();
                         if (token) headers.Authorization = `Bearer ${token}`;
                     }
+                    if (body != null && !headers["Content-Type"] && !headers["content-type"]) {
+                        const found = window.Constructor?.findByUrl?.(req.method || "GET", url);
+                        const ct = found?.ep?.body_content_type;
+                        if (ct) headers["Content-Type"] = ct;
+                    }
                     this.log(`<span class="log-time">${this.now()}</span> <b>${this.esc(req.title || "Запрос")}</b>`);
                     this.debugLog(`<span class="log-time">${this.now()}</span> <span class="log-dim">${req.method} ${this.esc(this.shortUrl(url))}</span>`);
                     let ok = false, data = null, code = 0, errText = "";
@@ -432,7 +477,9 @@ window.ScenarioRuntimeMixin = {
                             const result = await this.apiTest({ url, method: req.method, params, headers, body, proxy: ctx.proxy || null, timeout: req.timeout || 15 });
                             if (result.success) {
                                 data = result.data; code = result.status_code || 200; respHeaders = result.headers || {};
-                                ok = code < 400;
+                                ok = window.ScenarioEngine?.lztResponseOk
+                                    ? window.ScenarioEngine.lztResponseOk(code, data)
+                                    : code < 400;
                                 if (!ok) {
                                     const apiErr = data?.errors?.[0]?.message || data?.error?.message
                                         || (typeof data?.error === "string" ? data.error : null)
@@ -446,6 +493,10 @@ window.ScenarioRuntimeMixin = {
 
                         // 429 / rate limit: ждём Retry-After и повторяем (сверх обычных ретраев)
                         const isRate = code === 429;
+                        if (isRate) {
+                            stats.rate429 = (stats.rate429 || 0) + 1;
+                            if (window.LZTFeatures?.updateRunDash) window.LZTFeatures.updateRunDash(stats);
+                        }
                         if (isRate && respectRL && this.running) {
                             const ra = parseInt(respHeaders["retry-after"] || respHeaders["Retry-After"] || "");
                             const waitMs = (!isNaN(ra) ? ra * 1000 : Math.min(30000, 2000 * Math.pow(2, attempt)));
@@ -471,6 +522,7 @@ window.ScenarioRuntimeMixin = {
                     if (ok) {
                         this.setNodeState(node.id, "done");
                         stats.reqOk++;
+                        if (window.LZTFeatures?.updateRunDash) window.LZTFeatures.updateRunDash(stats);
                         this.debugLog(`<span class="log-ok">HTTP ${code}</span> <span class="log-dim">${this.summary(data)}</span>`);
                         this.logResultPreview(data);
                         cur = this.followEdge(node.id, "success");
@@ -478,7 +530,7 @@ window.ScenarioRuntimeMixin = {
                     } else {
                         this.setNodeState(node.id, "error");
                         stats.reqErr++;
-                        this.log(`<span class="log-err">✕</span> <span class="log-dim">${this.esc(req.title || "Запрос")}</span>`);
+                        if (window.LZTFeatures?.updateRunDash) window.LZTFeatures.updateRunDash(stats);                        this.log(`<span class="log-err">✕</span> <span class="log-dim">${this.esc(req.title || "Запрос")}</span>`);
                         this.debugLog(`<span class="log-err">${this.esc(errText)}</span>`);
                         cur = this.followEdge(node.id, "error");
                         if (!cur) {
@@ -636,10 +688,19 @@ window.ScenarioRuntimeMixin = {
                         price: it.price,
                         title: String(it.title || "").slice(0, 80),
                     }));
-                    const userPrompt = `${this.resolveVars(a.prompt || "", ctx)}\n\nЛоты (JSON):\n${JSON.stringify(compact)}`;
+                    const structuredHint = "\n\nВерни ТОЛЬКО валидный JSON без markdown и пояснений.";
+                    const userPrompt = `${this.resolveVars(a.prompt || "", ctx)}${structuredHint}\n\nЛоты (JSON):\n${JSON.stringify(compact)}`;
+                    const cacheKey = "ai:" + this._hashStr(userPrompt);
                     this.log(`<span class="log-time">${this.now()}</span> <i class="fa-solid fa-brain" style="color:#9b59b6;"></i> ИИ: ${compact.length} лот(ов)`);
                     try {
-                        let raw = await this.scenarioAiCall(userPrompt);
+                        this._aiCache = this._aiCache || {};
+                        let raw = this._aiCache[cacheKey];
+                        if (raw == null) {
+                            raw = await this.scenarioAiCall(userPrompt);
+                            this._aiCache[cacheKey] = raw;
+                        } else {
+                            this.log(`<span class="log-dim">кэш ИИ по hash лотов</span>`);
+                        }
                         if (typeof raw === "string") raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
                         let parsed;
                         let aiOk = true;
@@ -679,15 +740,61 @@ window.ScenarioRuntimeMixin = {
                         this.log(`<span class="log-warn">Снайпер: список пуст</span>`);
                     } else {
                         for (const it of items) {
-                            const price = parseFloat(it[sn.priceField || "price"] || 0);
                             const id = it[sn.itemField || "item_id"];
-                            if (!id || price > maxP) continue;
+                            let price = parseFloat(it[sn.priceField || "price"] || 0);
+                            // AI-вердикты часто без price — подтягиваем из filtered / last.items
+                            if ((!price || isNaN(price)) && id != null) {
+                                const pools = [ctx.vars.filtered, ctx.last?.items].filter(Array.isArray);
+                                for (const arr of pools) {
+                                    const src = arr.find(x => x && String(x[sn.itemField || "item_id"]) === String(id));
+                                    if (src && src[sn.priceField || "price"] != null) {
+                                        price = parseFloat(src[sn.priceField || "price"]);
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!id || isNaN(price) || price > maxP) continue;
                             if (ctx.vars._lzt_spend + price > maxSpend) { this.log(`<span class="log-warn">Лимит трат ${maxSpend}₽</span>`); break; }
+                            const title = it.title || it.item_title || "";
+                            this.log(`<span class="log-dim">кандидат: <b>${this.esc(String(id))}</b> · ${price}₽${title ? " · " + this.esc(String(title).slice(0, 60)) : ""}</span>`);
+                            if (sn.dryRun || this._demoMode) {
+                                this.log(`<span class="log-ok">○ Dry-run: купил бы ${id} за ${price}₽ (без fast-buy)</span>`);
+                                bought = true; port = "bought";
+                                break;
+                            }
+                            if (sn.confirmBuy !== false && !this._sniperLiveOkByNode?.[node.id]) {
+                                const okBuy = window.LZTDialog?.confirm
+                                    ? await LZTDialog.confirm(`Реальная покупка лота ${id} за ${price}₽?\nЛимит трат: ${maxSpend === Infinity ? "∞" : maxSpend + "₽"}`, { title: "Снайпер", okText: "Купить", danger: true })
+                                    : confirm(`Купить ${id} за ${price}₽?`);
+                                if (!okBuy) {
+                                    this.log(`<span class="log-warn">Покупка отменена</span>`);
+                                    break;
+                                }
+                                if (!this._sniperLiveOkByNode) this._sniperLiveOkByNode = {};
+                                this._sniperLiveOkByNode[node.id] = true;
+                            }
                             const url = `https://prod-api.lzt.market/${id}/fast-buy`;
                             this.log(`<span class="log-time">${this.now()}</span> <i class="fa-solid fa-crosshairs"></i> Покупка <b>${id}</b> за ${price}₽…`);
                             try {
-                                const result = await this.apiTest({ url, method: "POST", params: { price: String(price) }, headers: this._authHeaders(), body: null, proxy: ctx.proxy || null, timeout: 20 });
-                                if (this._lztBuyOk(result)) {
+                                let result = null;
+                                let buyOk = false;
+                                for (let ri = 0; ri < 20; ri++) {
+                                    result = await this.apiTest({
+                                        url, method: "POST", params: {},
+                                        headers: this._authHeaders(),
+                                        body: { price },
+                                        proxy: ctx.proxy || null, timeout: 20,
+                                    });
+                                    if (this._lztBuyOk(result)) { buyOk = true; break; }
+                                    if (this._isRetryRequest(result?.data) && this.running) {
+                                        const waitMs = Math.min(5000, 300 + ri * 200);
+                                        this.debugLog(`<span class="log-warn">retry_request, повтор ${ri + 1}/20…</span>`);
+                                        await this.sleep(waitMs);
+                                        continue;
+                                    }
+                                    break;
+                                }
+                                if (buyOk) {
                                     ctx.vars._lzt_spend += price;
                                     stats.spent = (stats.spent || 0) + price;
                                     bought = true; port = "bought";
@@ -698,7 +805,11 @@ window.ScenarioRuntimeMixin = {
                                 } else {
                                     port = "fail";
                                     stats.hardFail = (stats.hardFail || 0) + 1;
-                                    this.log(`<span class="log-err">✕ ${this.esc(result.error || "не куплено")}</span>`);
+                                    const failMsg = result?.data?.errors?.[0]?.message
+                                        || result?.data?.error
+                                        || result?.error
+                                        || "не куплено";
+                                    this.log(`<span class="log-err">✕ ${this.esc(String(failMsg))}</span>`);
                                     break;
                                 }
                             } catch (e) { port = "fail"; stats.hardFail = (stats.hardFail || 0) + 1; this.log(`<span class="log-err">✕ ${this.esc(String(e))}</span>`); break; }
@@ -780,7 +891,7 @@ window.ScenarioRuntimeMixin = {
                             await this._execLoop(subCur, ctx, stats, counters, proxyState, {
                                 nodes: subNodes,
                                 edges: subEdges,
-                                maxSteps: 200,
+                                maxSteps: 500,
                                 silent: false,
                                 label: tpl.title
                             });
@@ -807,6 +918,10 @@ window.ScenarioRuntimeMixin = {
         this._lastHookResult = null;
         try {
         if (this._runBusy) return { ok: false, error: "busy" };
+        if (this._nodeTestBusy) {
+            this.flash?.("Дождитесь мини-теста шага", "err");
+            return { ok: false, error: "busy" };
+        }
         const t = (k, fb) => (window.I18N && I18N.t(k)) || fb;
         const start = this.nodes.find(n => n.type === "start");
         if (!start) {
@@ -831,6 +946,7 @@ window.ScenarioRuntimeMixin = {
         }
 
         this._runBusy = true;
+        this._sniperLiveOkByNode = {};
         const runToken = Symbol("run");
         this._runToken = runToken;
         this.running = true;
@@ -853,15 +969,15 @@ window.ScenarioRuntimeMixin = {
         }
         const counters = {};
         const proxyState = {};
-        const stats = { reqOk: 0, reqErr: 0, notify: 0, saved: 0, spent: 0, hardFail: 0, startedAt: Date.now() };
+        const stats = { reqOk: 0, reqErr: 0, notify: 0, saved: 0, spent: 0, hardFail: 0, rate429: 0, startedAt: Date.now() };
         this._runStats = stats;
+        if (window.LZTFeatures?.updateRunDash) window.LZTFeatures.updateRunDash(stats);
         let steps = 0;
         let runErr = null;
         try {
             ({ steps } = await this._execLoop(startCur, ctx, stats, counters, proxyState, {}));
-            if (steps >= 300) {
+            if (steps >= 2000) {
                 runErr = "step limit";
-                this.log(`<span class="log-err">Достигнут лимит шагов (300) — возможно, зациклено.</span>`);
             }
         } catch (err) {
             runErr = String(err);
@@ -907,6 +1023,99 @@ window.ScenarioRuntimeMixin = {
         this._lastHookResult = out;
         return out;
         } finally {
+            this._demoMode = false;
+        }
+    },
+
+    _ctxLastForNode(nodeId) {
+        const preds = (this.edges || []).filter((e) => e.to === nodeId).map((e) => e.from);
+        for (const pid of preds) {
+            if (this.lastRunData && this.lastRunData[pid] != null) return this.lastRunData[pid];
+        }
+        if (this.lastRunData && this.lastRunData.__latest != null) return this.lastRunData.__latest;
+        return null;
+    },
+
+    _isFastBuyRequest(node) {
+        const req = node && node.request;
+        if (!req) return false;
+        const method = String(req.method || "GET").toUpperCase();
+        if (!/^(POST|PUT|PATCH)$/.test(method)) return false;
+        const url = String(req.url || "");
+        return /fast-buy/i.test(url);
+    },
+
+    showNodeTestPopover(nodeId, text, ok) {
+        document.querySelectorAll(".snode-test-pop").forEach((el) => el.remove());
+        const card = this.nodesLayer?.querySelector(`[data-node="${nodeId}"]`);
+        if (!card) return;
+        const pop = document.createElement("div");
+        pop.className = "snode-test-pop" + (ok ? " ok" : " err");
+        pop.innerHTML = `<i class="fa-solid ${ok ? "fa-circle-check" : "fa-circle-xmark"}"></i> <span>${this.esc(text)}</span>`;
+        card.appendChild(pop);
+        setTimeout(() => { try { pop.remove(); } catch (e) {} }, 6000);
+    },
+
+    /** Мини-тест одного блока request|ai без полного Run */
+    async testNode(nodeId) {
+        if (this._runBusy || this._nodeTestBusy) {
+            this.flash?.("Сначала дождитесь окончания прогона", "err");
+            return { ok: false, error: "busy" };
+        }
+        const node = (this.nodes || []).find((n) => n.id === nodeId);
+        if (!node || (node.type !== "request" && node.type !== "ai")) {
+            this.flash?.("Мини-тест только для Запрос / ИИ", "err");
+            return { ok: false, error: "unsupported" };
+        }
+        if (node.type === "request" && this._isFastBuyRequest(node)) {
+            this.flash?.("fast-buy нельзя мини-тестить — полный Run или Dry-run снайпера", "err");
+            return { ok: false, error: "fast-buy" };
+        }
+
+        this._nodeTestBusy = true;
+        this._demoMode = !!this._scenarioIsDemo;
+        this.running = true;
+        const stats = { reqOk: 0, reqErr: 0, notify: 0, saved: 0, spent: 0, hardFail: 0, rate429: 0, startedAt: Date.now() };
+        this._runStats = stats;
+        this._testVars = this._testVars || {};
+        const ctx = {
+            last: this._ctxLastForNode(nodeId),
+            vars: Object.assign({}, this._testVars),
+            proxy: null,
+        };
+
+        this.clearRunStates();
+        this.setNodeState(nodeId, "running");
+        this.log(`<span class="log-time">${this.now()}</span> <b>Мини-тест</b> · ${this.esc(node.type)}`);
+        this.debugLog(`<span class="log-time">${this.now()}</span> <span class="log-dim">test node ${this.esc(nodeId)}</span>`);
+
+        let ok = true;
+        let errMsg = "";
+        let meta = { nodeType: node.type };
+        try {
+            await this._execNode(node, ctx, stats, {}, {}, { silent: false });
+            Object.assign(this._testVars, ctx.vars || {});
+            const data = this.lastRunData?.[nodeId] ?? ctx.last;
+            const el = this.nodesLayer?.querySelector(`[data-node="${nodeId}"]`);
+            ok = !!(el && el.classList.contains("done"));
+            meta.aiOk = node.type !== "ai" || ok;
+            const text = this.humanTestSummary(data, Object.assign({ error: ok ? "" : (stats.reqErr ? "ошибка запроса" : "") }, meta));
+            this.showNodeTestPopover(nodeId, text, ok);
+            if (!ok) this.setNodeState(nodeId, "error");
+            else this.setNodeState(nodeId, "done");
+            this.flash?.(ok ? text : ("Ошибка: " + text), ok ? "ok" : "err");
+            return { ok, result: data, summary: text };
+        } catch (e) {
+            ok = false;
+            errMsg = String(e.message || e);
+            this.setNodeState(nodeId, "error");
+            this.showNodeTestPopover(nodeId, errMsg, false);
+            this.log(`<span class="log-err">✕ Мини-тест: ${this.esc(errMsg)}</span>`);
+            this.flash?.(errMsg, "err");
+            return { ok: false, error: errMsg };
+        } finally {
+            this.running = false;
+            this._nodeTestBusy = false;
             this._demoMode = false;
         }
     },

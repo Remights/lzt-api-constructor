@@ -94,6 +94,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             const t = (token || "").trim();
             localStorage.setItem("lzt_api_token", t);
             updateTokenState(t);
+            if (window.LZTTokenProfiles?.syncFromTokenSet) window.LZTTokenProfiles.syncFromTokenSet(t);
         },
         openGetPage: () => {
             fetch("/api/open-browser", {

@@ -9,7 +9,7 @@ class RequestPayload(BaseModel):
     method: str = "GET"
     params: Dict[str, Any] = {}
     headers: Dict[str, Any] = {}
-    body: Optional[Dict[str, Any]] = None
+    body: Optional[Any] = None
     proxy: Optional[str] = None
     timeout: Optional[int] = 15
 
@@ -44,6 +44,7 @@ class FreeAiPayload(BaseModel):
     prompt: str = ""
     system: str = ""
     model: str = ""
+    license_key: str = ""
 
 
 class MovePayload(BaseModel):

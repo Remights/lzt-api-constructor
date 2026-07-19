@@ -15,7 +15,7 @@ import requests
 try:
     from backend.config import APP_VERSION as _CFG_VER
 except Exception:
-    _CFG_VER = "1.2.0"
+    _CFG_VER = "1.3.0"
 APP_VERSION = os.environ.get("LZT_APP_VERSION", _CFG_VER)
 DEFAULT_FINGERPRINT_PREFIX = "LZTConstruct/"
 DEFAULT_MODEL = os.environ.get("GROQ_FREE_MODEL", "llama-3.1-8b-instant")
@@ -27,6 +27,11 @@ try:
     FREE_LIMIT_PER_HOUR = int(os.environ.get("LZT_FREE_AI_LIMIT", "15"))
 except ValueError:
     FREE_LIMIT_PER_HOUR = 15
+PRO_LIMIT_PER_HOUR = 120
+try:
+    PRO_LIMIT_PER_HOUR = int(os.environ.get("LZT_PRO_AI_LIMIT", "120"))
+except ValueError:
+    PRO_LIMIT_PER_HOUR = 120
 WINDOW_SEC = 3600
 
 # Белый список моделей Groq для бесплатного режима (можно сузить через GROQ_FREE_MODELS)
@@ -125,34 +130,62 @@ def _rate_key(client_ip: str, fingerprint: str) -> str:
     return f"{client_ip}|{fingerprint}"
 
 
-def rate_limit_status(client_ip: str, fingerprint: str) -> Tuple[bool, int, int]:
+def pro_license_keys() -> List[str]:
+    raw = os.environ.get("LZT_PRO_LICENSE_KEYS", "") or os.environ.get("LZT_PRO_LICENSES", "")
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+
+def check_pro_license(key: Optional[str]) -> bool:
+    k = (key or "").strip()
+    if not k:
+        return False
+    allowed = pro_license_keys()
+    if not allowed:
+        return False
+    return any(secrets_compare(k, a) for a in allowed)
+
+
+def secrets_compare(a: str, b: str) -> bool:
+    import secrets as _sec
+    if len(a) != len(b):
+        return False
+    return _sec.compare_digest(a, b)
+
+
+def rate_limit_for(license_key: Optional[str] = None) -> int:
+    return PRO_LIMIT_PER_HOUR if check_pro_license(license_key) else FREE_LIMIT_PER_HOUR
+
+
+def rate_limit_status(client_ip: str, fingerprint: str, license_key: Optional[str] = None) -> Tuple[bool, int, int]:
     """Возвращает (ok, remaining, limit)."""
     now = time.time()
+    limit = rate_limit_for(license_key)
     key = _rate_key(client_ip, fingerprint)
     with _rate_lock:
         bucket = _rate_buckets.setdefault(key, deque())
         while bucket and bucket[0] <= now - WINDOW_SEC:
             bucket.popleft()
         used = len(bucket)
-        remaining = max(0, FREE_LIMIT_PER_HOUR - used)
-        if used >= FREE_LIMIT_PER_HOUR:
-            return False, 0, FREE_LIMIT_PER_HOUR
-        return True, remaining, FREE_LIMIT_PER_HOUR
+        remaining = max(0, limit - used)
+        if used >= limit:
+            return False, 0, limit
+        return True, remaining, limit
 
 
-def consume_rate_slot(client_ip: str, fingerprint: str) -> Tuple[bool, int, int]:
+def consume_rate_slot(client_ip: str, fingerprint: str, license_key: Optional[str] = None) -> Tuple[bool, int, int]:
     """Атомарно занимает один слот лимита. Returns (ok, remaining, limit)."""
     now = time.time()
+    limit = rate_limit_for(license_key)
     key = _rate_key(client_ip, fingerprint)
     with _rate_lock:
         bucket = _rate_buckets.setdefault(key, deque())
         while bucket and bucket[0] <= now - WINDOW_SEC:
             bucket.popleft()
-        if len(bucket) >= FREE_LIMIT_PER_HOUR:
-            return False, 0, FREE_LIMIT_PER_HOUR
+        if len(bucket) >= limit:
+            return False, 0, limit
         bucket.append(now)
-        remaining = max(0, FREE_LIMIT_PER_HOUR - len(bucket))
-        return True, remaining, FREE_LIMIT_PER_HOUR
+        remaining = max(0, limit - len(bucket))
+        return True, remaining, limit
 
 
 def record_usage(client_ip: str, fingerprint: str) -> None:
@@ -176,7 +209,7 @@ def _next_key() -> str:
     return key
 
 
-def chat_free(prompt: str, system: str, client_ip: str, fingerprint: str, model: Optional[str] = None) -> Tuple[bool, dict]:
+def chat_free(prompt: str, system: str, client_ip: str, fingerprint: str, model: Optional[str] = None, license_key: Optional[str] = None) -> Tuple[bool, dict]:
     ok_fp, err_fp = validate_fingerprint(fingerprint)
     if not ok_fp:
         return False, {"error": err_fp, "code": "bad_client"}
@@ -185,10 +218,10 @@ def chat_free(prompt: str, system: str, client_ip: str, fingerprint: str, model:
     if err_model:
         return False, {"error": err_model, "code": "bad_model"}
 
-    ok_rl, remaining, limit = consume_rate_slot(client_ip, fingerprint)
+    ok_rl, remaining, limit = consume_rate_slot(client_ip, fingerprint, license_key)
     if not ok_rl:
         return False, {
-            "error": f"Лимит бесплатного AI: {limit} запросов в час. Попробуйте позже или переключитесь на «Свой ключ».",
+            "error": f"Лимит AI: {limit} запросов в час. Pro-ключ или «Свой ключ» — выше лимит.",
             "code": "rate_limit",
             "limit": limit,
             "remaining": 0,
@@ -226,7 +259,7 @@ def chat_free(prompt: str, system: str, client_ip: str, fingerprint: str, model:
                 last_err = msg or f"HTTP {r.status_code}"
                 continue
             content = data["choices"][0]["message"]["content"]
-            _, rem_after, lim = rate_limit_status(client_ip, fingerprint)
+            _, rem_after, lim = rate_limit_status(client_ip, fingerprint, license_key)
             return True, {
                 "content": content,
                 "remaining": rem_after,

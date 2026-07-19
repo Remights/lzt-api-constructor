@@ -169,7 +169,7 @@ def ai_free_endpoint(payload: FreeAiPayload, request: Request):
 
     if ai_gateway.groq_keys():
         client_ip = ai_gateway.resolve_client_ip(request)
-        ok, data = ai_gateway.chat_free(payload.prompt, payload.system, client_ip, fp, payload.model)
+        ok, data = ai_gateway.chat_free(payload.prompt, payload.system, client_ip, fp, payload.model, payload.license_key)
         if ok:
             return {
                 "success": True,
@@ -177,6 +177,7 @@ def ai_free_endpoint(payload: FreeAiPayload, request: Request):
                 "remaining": data.get("remaining"),
                 "limit": data.get("limit"),
                 "model": data.get("model"),
+                "pro": ai_gateway.check_pro_license(payload.license_key),
             }
         return {
             "success": False,
@@ -191,7 +192,7 @@ def ai_free_endpoint(payload: FreeAiPayload, request: Request):
             "POST",
             remote,
             headers={"Content-Type": "application/json", "X-LZT-Client": fp or ""},
-            json_body={"prompt": payload.prompt, "system": payload.system, "model": payload.model},
+            json_body={"prompt": payload.prompt, "system": payload.system, "model": payload.model, "license_key": payload.license_key},
         )
 
     return {"success": False, "error": "Бесплатный AI недоступен", "code": "no_url"}

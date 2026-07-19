@@ -82,7 +82,25 @@
         return { port: "body", index: idx, item: arr[idx], finished: false, length: arr.length };
     }
 
+    /** HTTP < 400 и нет LZT-ошибок в теле (errors / error). */
+    function lztResponseOk(status, data) {
+        if ((status || 0) >= 400) return false;
+        if (data == null) return true;
+        if (typeof data !== "object") return true;
+        if (Array.isArray(data.errors) && data.errors.length) return false;
+        if (data.error) return false;
+        return true;
+    }
+
+    /** LZT fast-buy: нужно повторить тот же запрос. */
+    function isRetryRequest(data) {
+        if (data == null) return false;
+        const blob = typeof data === "string" ? data : JSON.stringify(data);
+        return /retry_request/i.test(blob);
+    }
+
     window.ScenarioEngine = {
         getPath, resolveVars, evalCondition, applyFilter, stepLoop, stepForeach,
+        lztResponseOk, isRetryRequest,
     };
 })();

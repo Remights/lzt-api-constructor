@@ -140,6 +140,12 @@ def load_catalog(ru_overlay=None):
                         prm["desc_ru"] = ru_overlay[prm["name"]]
                     unique_params.append(prm)
 
+                rb = op.get("requestBody") or {}
+                if "$ref" in rb:
+                    rb = _resolve_ref(doc, rb["$ref"]) or {}
+                content = (rb.get("content") or {}) if isinstance(rb, dict) else {}
+                body_ct = next(iter(content.keys()), None) if content else None
+
                 endpoints.append({
                     "id": f"{api_id}:{method.upper()}:{path}",
                     "api": api_id,
@@ -149,6 +155,7 @@ def load_catalog(ru_overlay=None):
                     "summary": op.get("summary") or path,
                     "desc": _clean_text(op.get("description"), 300),
                     "params": unique_params,
+                    "body_content_type": body_ct,
                 })
 
         apis[api_id] = {

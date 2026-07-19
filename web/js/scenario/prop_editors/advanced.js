@@ -9,7 +9,9 @@
         pop.classList.add("pop-wide");
         pop.innerHTML = `<div class="pop-title"><i class="fa-solid fa-list-ul" style="color:#8e44ad;"></i> Для каждого</div>
             <label class="pop-label">Список (путь)</label>
-            <input type="text" class="form-control" id="pop-source" value="${esc(fe.source)}" placeholder="last.items">
+            <div class="pop-field-row">
+                <input type="text" class="form-control" id="pop-source" value="${esc(fe.source)}" placeholder="last.items">
+            </div>
             <label class="pop-label" style="margin-top:10px;">Имя переменной элемента</label>
             <input type="text" class="form-control" id="pop-itemvar" value="${esc(fe.itemVar)}" placeholder="item">
             <label class="pop-label" style="margin-top:10px;">Имя переменной индекса</label>
@@ -17,6 +19,7 @@
             <div class="pop-hint">Тело подключите к выходу «Тело». После каждого элемента верните линию на вход блока.</div>
             <div class="pop-actions"><button class="btn-save" id="pop-ok">Готово</button></div>`;
         document.body.appendChild(pop);
+        window.LZTPathPicker?.bind(pop.querySelector("#pop-source"), { sc, nodeId: node.id, insertMode: "path", preferLists: true, mode: "list" });
         pop.querySelector("#pop-ok").addEventListener("click", () => {
             fe.source = pop.querySelector("#pop-source").value.trim() || "last.items";
             fe.itemVar = pop.querySelector("#pop-itemvar").value.trim().replace(/[^\w]/g, "_") || "item";
@@ -33,10 +36,13 @@
         pop.classList.add("pop-wide");
         pop.innerHTML = `<div class="pop-title"><i class="fa-solid fa-user-check" style="color:#2980b9;"></i> Проверка аккаунта</div>
             <label class="pop-label">ID лота (путь или число)</label>
-            <input type="text" class="form-control" id="pop-itempath" value="${esc(c.itemPath)}" placeholder="last.items.0.item_id">
+            <div class="pop-field-row">
+                <input type="text" class="form-control" id="pop-itempath" value="${esc(c.itemPath)}" placeholder="last.items.0.item_id">
+            </div>
             <label class="rate-check" style="margin-top:10px;"><input type="checkbox" id="pop-rejectsold" ${c.rejectSold !== false ? "checked" : ""}> Считать проданный/недоступный лот «битым»</label>
             <div class="pop-actions"><button class="btn-save" id="pop-ok">Готово</button></div>`;
         document.body.appendChild(pop);
+        window.LZTPathPicker?.bind(pop.querySelector("#pop-itempath"), { sc, nodeId: node.id, insertMode: "path", mode: "id" });
         pop.querySelector("#pop-ok").addEventListener("click", () => {
             c.itemPath = pop.querySelector("#pop-itempath").value.trim() || "last.items.0.item_id";
             c.rejectSold = pop.querySelector("#pop-rejectsold").checked;
@@ -52,17 +58,25 @@
         pop.classList.add("pop-wide");
         pop.innerHTML = `<div class="pop-title"><i class="fa-solid fa-crosshairs" style="color:#c0392b;"></i> Снайпер — автопокупка</div>
             <label class="pop-label">Список лотов (путь)</label>
-            <input type="text" class="form-control" id="pop-source" value="${esc(sn.source)}" placeholder="last.items">
+            <div class="pop-field-row">
+                <input type="text" class="form-control" id="pop-source" value="${esc(sn.source)}" placeholder="last.items">
+            </div>
             <div class="reliability-row" style="margin-top:10px;">
                 <div><label class="mini-label">Макс. цена, ₽</label><input type="text" class="form-control" id="pop-maxp" value="${esc(sn.maxPrice)}"></div>
                 <div><label class="mini-label">Лимит трат, ₽</label><input type="text" class="form-control" id="pop-maxs" value="${esc(sn.maxSpend)}"></div>
             </div>
+            <label class="rate-check" style="margin-top:10px;"><input type="checkbox" id="pop-dryrun" ${sn.dryRun ? "checked" : ""}> Dry-run — только лог «купил бы», без fast-buy</label>
+            <label class="rate-check" style="margin-top:6px;"><input type="checkbox" id="pop-confirm" ${sn.confirmBuy !== false ? "checked" : ""}> Спросить перед первой реальной покупкой в прогоне</label>
+            <div class="pop-hint">Покупает реальные лоты за баланс. Проверьте max price / лимит трат. ИИ перед снайпером может ошибаться.</div>
             <div class="pop-actions"><button class="btn-save" id="pop-ok">Готово</button></div>`;
         document.body.appendChild(pop);
+        window.LZTPathPicker?.bind(pop.querySelector("#pop-source"), { sc, nodeId: node.id, insertMode: "path", preferLists: true, mode: "list" });
         pop.querySelector("#pop-ok").addEventListener("click", () => {
             sn.source = pop.querySelector("#pop-source").value.trim() || "last.items";
             sn.maxPrice = pop.querySelector("#pop-maxp").value.trim() || "100";
             sn.maxSpend = pop.querySelector("#pop-maxs").value.trim() || "5000";
+            sn.dryRun = pop.querySelector("#pop-dryrun").checked;
+            sn.confirmBuy = pop.querySelector("#pop-confirm").checked;
             dismiss();
             sc.render();
             sc.regenScript();
@@ -72,25 +86,64 @@
 
     R().register("ai", ({ sc, node, pop, dismiss, esc }) => {
         const a = node.ai || {};
+        const AI_PRESETS = {
+            steam_batch: {
+                label: "Steam batch",
+                source: "vars.filtered",
+                prompt: "Оцени лоты Steam. Верни ТОЛЬКО JSON {\"items\":[{\"item_id\":N,\"buy\":true,\"score\":8,\"reason\":\"...\"}]} без markdown.",
+            },
+            forum_tz: {
+                label: "Forum TZ",
+                source: "last.threads",
+                prompt: "По темам форума (last.threads) оцени релевантность ТЗ. Верни ТОЛЬКО JSON {\"items\":[{\"thread_id\":N,\"relevant\":true,\"score\":8,\"reason\":\"...\"}]} без markdown.",
+            },
+            json_only: {
+                label: "Только JSON",
+                source: a.source || "last.items",
+                prompt: (a.prompt || "Оцени данные.").replace(/\s*$/, "") + "\n\nВерни ТОЛЬКО валидный JSON, без пояснений и markdown.",
+            },
+        };
+        const presetOpts = Object.entries(AI_PRESETS).map(([k, v]) =>
+            `<option value="${k}" ${a.preset === k ? "selected" : ""}>${esc(v.label)}</option>`
+        ).join("");
         pop.classList.add("pop-wide");
         pop.innerHTML = `<div class="pop-title"><i class="fa-solid fa-brain" style="color:#9b59b6;"></i> ИИ — оценка лотов</div>
-            <label class="pop-label">Список лотов (путь)</label>
-            <input type="text" class="form-control" id="pop-source" value="${esc(a.source)}" placeholder="vars.filtered">
+            <label class="pop-label">Пресет промпта</label>
+            <select class="form-control" id="pop-preset"><option value="">— свой —</option>${presetOpts}</select>
+            <label class="pop-label" style="margin-top:10px;">Список лотов (путь)</label>
+            <div class="pop-field-row">
+                <input type="text" class="form-control" id="pop-source" value="${esc(a.source)}" placeholder="vars.filtered">
+            </div>
             <label class="pop-label" style="margin-top:10px;">Сохранить ответ как</label>
             <input type="text" class="form-control" id="pop-outvar" value="${esc(a.outputVar || "ai_result")}" placeholder="ai_result">
             <label class="rate-check" style="margin-top:10px;"><input type="checkbox" id="pop-batch" ${a.batch !== false ? "checked" : ""}> Пакетная оценка (до N лотов)</label>
             <input type="number" class="form-control" id="pop-batchlimit" value="${a.batchLimit || 50}" min="1" max="200" style="margin-top:6px;">
             <label class="pop-label" style="margin-top:10px;">Промпт</label>
             <textarea class="form-control" id="pop-prompt" rows="4">${esc(a.prompt || "")}</textarea>
-            <div class="pop-hint">Ключ ИИ — в AI+ / настройках. В демо-режиме ответ mock без API.</div>
+            <div class="pop-hint">ИИ может ошибаться в оценке лотов — не покупайте «вслепую» по buy. Ключ — в AI+ / настройках. В демо ответ mock без API. При ошибке разбора JSON — порт «Ошибка».</div>
             <div class="pop-actions"><button class="btn-save" id="pop-ok">Готово</button></div>`;
         document.body.appendChild(pop);
+        const ctxAi = window.LZTPathPicker?.inferContext?.(sc, node.id);
+        if (ctxAi?.kind === "forum") {
+            const src = pop.querySelector("#pop-source");
+            if (!a.source || /items|filtered/.test(a.source)) src.value = "last.threads";
+        }
+        const presetSel = pop.querySelector("#pop-preset");
+        presetSel.addEventListener("change", () => {
+            const p = AI_PRESETS[presetSel.value];
+            if (!p) return;
+            pop.querySelector("#pop-source").value = p.source;
+            pop.querySelector("#pop-prompt").value = p.prompt;
+        });
+        window.LZTPathPicker?.bind(pop.querySelector("#pop-source"), { sc, nodeId: node.id, insertMode: "path", preferLists: true, mode: "list" });
+        window.LZTPathPicker?.bindChips(pop.querySelector("#pop-prompt"), { sc, mode: "condition" });
         pop.querySelector("#pop-ok").addEventListener("click", () => {
             a.source = pop.querySelector("#pop-source").value.trim() || "last.items";
             a.outputVar = pop.querySelector("#pop-outvar").value.trim().replace(/[^\w]/g, "_") || "ai_result";
             a.batch = pop.querySelector("#pop-batch").checked;
             a.batchLimit = parseInt(pop.querySelector("#pop-batchlimit").value, 10) || 50;
             a.prompt = pop.querySelector("#pop-prompt").value;
+            a.preset = presetSel.value || "";
             dismiss();
             sc.render();
             sc.regenScript();

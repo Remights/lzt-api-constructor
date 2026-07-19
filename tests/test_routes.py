@@ -30,7 +30,7 @@ def test_config_returns_version(client):
 
 def test_config_returns_remaining_with_fingerprint(client):
     ai_gateway._rate_buckets.clear()
-    fp = "LZTConstruct/1.2.0"
+    fp = "LZTConstruct/1.3.0"
     r = client.get("/api/config", headers={"X-LZT-Client": fp})
     assert r.status_code == 200
     data = r.json()
@@ -40,7 +40,7 @@ def test_config_returns_remaining_with_fingerprint(client):
 def test_free_ai_status(client, monkeypatch):
     ai_gateway._rate_buckets.clear()
     monkeypatch.setattr(ai_gateway, "groq_keys", lambda: ["test-key"])
-    fp = "LZTConstruct/1.2.0"
+    fp = "LZTConstruct/1.3.0"
     r = client.get("/api/ai/free/status", headers={"X-LZT-Client": fp})
     assert r.status_code == 200
     data = r.json()
@@ -66,6 +66,34 @@ def test_ssrf_blocks_localhost_on_test(client):
     r = client.post("/api/test", json={"url": "http://127.0.0.1/admin", "method": "GET"})
     assert r.status_code == 200
     assert r.json()["success"] is False
+
+
+def test_api_test_accepts_string_body(client):
+    """body может быть строкой (как из textarea) — не 422."""
+    r = client.post(
+        "/api/test",
+        json={
+            "url": "http://127.0.0.1/admin",
+            "method": "POST",
+            "body": "not-json-raw",
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["success"] is False
+
+
+def test_catalog_has_body_content_type(client):
+    r = client.get("/api/catalog")
+    assert r.status_code == 200
+    data = r.json()
+    found = False
+    for api in (data.get("apis") or {}).values():
+        for ep in api.get("endpoints") or []:
+            if ep.get("path") == "/{item_id}/fast-buy" and ep.get("method") == "POST":
+                assert ep.get("body_content_type") == "application/json"
+                found = True
+                break
+    assert found
 
 
 def test_ssrf_blocks_private_on_proxy_check(client):

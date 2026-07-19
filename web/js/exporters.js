@@ -231,9 +231,17 @@
         return new Blob(all, { type: "application/zip" });
     }
 
-    function exportZip() {
+    async function exportZip() {
         const S = window.Scenario;
         if (!S || !S.nodes.length) { S && S.flash && S.flash("Пустой сценарий", "err"); return; }
+        const lim = S.codegenLimitations?.() || [];
+        if (lim.length && window.LZTDialog?.confirm) {
+            const ok = await LZTDialog.confirm(
+                `В ZIP будут заглушки для: ${lim.map((l) => l.label).join(", ")}. Скачать всё равно?`,
+                { title: "Экспорт неполный", okText: "Скачать ZIP", danger: false }
+            );
+            if (!ok) return;
+        }
         const lang = S.scriptLang || "python";
         const name = S.slugify(S.title);
         let zipEntries;

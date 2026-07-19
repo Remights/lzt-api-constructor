@@ -13,6 +13,8 @@
             "sidebar.docs": "Справочник LOLZ API",
             "sidebar.examplesApi": "Примеры API",
             "sidebar.readyScenarios": "Готовые сценарии",
+            "sidebar.claim": "No-code клиент Market + Forum API · OpenAPI · прогон · codegen ×7",
+            "sidebar.readyHint": "Скачал → токен в Старт → Запустить",
             "sidebar.blocksMarket": "Блоки-запросы: Маркет",
             "sidebar.blocksForum": "Блоки-запросы: Форум (Zelenka)",
             "sidebar.myScenarios": "Мои сценарии",
@@ -152,7 +154,7 @@
             "blocks.sniper.label": "Снайпер (автопокупка)",
             "blocks.sniper.desc": "Купить первый подходящий лот",
             "blocks.ai.label": "ИИ (оценка лотов)",
-            "blocks.ai.desc": "Отправить лоты в нейросеть — вердикт buy/skip",
+            "blocks.ai.desc": "Оценка лотов нейросетью (может ошибаться) — buy/skip",
             "blocks.proxy.label": "Прокси",
             "blocks.proxy.desc": "Слать запросы через прокси",
             "blocks.delay.label": "Задержка",
@@ -162,8 +164,12 @@
             "canvas.hint.noToken": "Откройте <b>«Демо: поиск → снайпер»</b> слева или вставьте API-токен в блок <b>«Старт»</b> · затем <b>«Добавить блок»</b> и соедините линиями",
             "canvas.hint.hasToken": "1) <b>«Добавить блок»</b> → «Запрос» · 2) линия от <b>Старт</b> · 3) <b>«Запустить»</b> справа · или шаблон слева",
             "canvas.chip.demo": "Демо-сценарий",
+            "canvas.chip.demo1min": "Демо за 1 мин",
+            "canvas.chip.cheap": "Поиск дешёвых",
+            "canvas.chip.bump": "Bump",
             "canvas.chip.smart": "Умный снайпер",
             "canvas.chip.price": "Анализ цены",
+            "canvas.chip.forum": "Монитор тем",
             "canvas.connectHint": "Потяните линию от зелёного кружка на «Старт» к новому блоку",
             "saved.empty": "Пока нет сохранённых сценариев.",
             "saved.emptyHint": "Нажмите «Сохранить» на панели холста или попробуйте демо.",
@@ -225,6 +231,8 @@
             "sidebar.docs": "LOLZ API Reference",
             "sidebar.examplesApi": "API Examples",
             "sidebar.readyScenarios": "Ready-made scenarios",
+            "sidebar.claim": "No-code Market + Forum API client · OpenAPI · run · codegen ×7",
+            "sidebar.readyHint": "Install → paste token in Start → Run",
             "sidebar.blocksMarket": "Request blocks: Market",
             "sidebar.blocksForum": "Request blocks: Forum (Zelenka)",
             "sidebar.myScenarios": "My scenarios",
@@ -365,7 +373,7 @@
             "blocks.sniper.label": "Sniper (auto-buy)",
             "blocks.sniper.desc": "Buy the first matching listing",
             "blocks.ai.label": "AI (batch scoring)",
-            "blocks.ai.desc": "Send listings to your AI — buy/skip verdict",
+            "blocks.ai.desc": "AI lot scoring (can err) — buy/skip verdict",
             "blocks.proxy.label": "Proxy",
             "blocks.proxy.desc": "Send requests through proxies",
             "blocks.delay.label": "Delay",
@@ -375,8 +383,12 @@
             "canvas.hint.noToken": "Open <b>«Demo: search → sniper»</b> on the left or paste your API token in <b>Start</b> · then <b>Add block</b> and connect with lines",
             "canvas.hint.hasToken": "1) <b>Add block</b> → Request · 2) line from <b>Start</b> · 3) <b>Run</b> on the right · or a template on the left",
             "canvas.chip.demo": "Demo scenario",
+            "canvas.chip.demo1min": "1-min demo",
+            "canvas.chip.cheap": "Cheap search",
+            "canvas.chip.bump": "Bump",
             "canvas.chip.smart": "Smart sniper",
             "canvas.chip.price": "Price check",
+            "canvas.chip.forum": "Forum threads",
             "canvas.connectHint": "Drag a line from the green port on Start to the new block",
             "saved.empty": "No saved scenarios yet.",
             "saved.emptyHint": "Press Save on the canvas toolbar or try demo.",
@@ -496,6 +508,8 @@
             const ts = modal.querySelector("#set-theme");
             if (ls) ls.value = I18N.lang;
             if (ts) ts.value = THEME.current;
+            const pro = document.getElementById("set-pro-license");
+            if (pro) pro.value = localStorage.getItem("lzt_pro_license") || "";
             if (typeof window.refreshTrayStatus === "function") window.refreshTrayStatus();
             if (typeof window.refreshSettingsI18n === "function") window.refreshSettingsI18n();
             if (window.LZTPanels && LZTPanels.syncPanelSettingsUI) LZTPanels.syncPanelSettingsUI();
@@ -507,6 +521,12 @@
         modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
         modal.querySelector("#set-lang")?.addEventListener("change", (e) => I18N.set(e.target.value));
         modal.querySelector("#set-theme")?.addEventListener("change", (e) => Theme.set(e.target.value));
+        document.getElementById("set-pro-license")?.addEventListener("change", (e) => {
+            localStorage.setItem("lzt_pro_license", (e.target.value || "").trim());
+        });
+        document.getElementById("set-pro-license")?.addEventListener("blur", (e) => {
+            localStorage.setItem("lzt_pro_license", (e.target.value || "").trim());
+        });
         modal.querySelector("#set-replay-tour")?.addEventListener("click", () => {
             close();
             localStorage.removeItem("lzt_tour_done");

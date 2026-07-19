@@ -65,12 +65,32 @@ class HookScriptPayload(BaseModel):
     timeout: int = 30
 
 
+def _is_loopback(request: Request) -> bool:
+    host = (request.client.host if request and request.client else "") or ""
+    return host in ("127.0.0.1", "::1", "localhost", "testclient")
+
+
 def _auth(secret_h: Optional[str], secret_q: Optional[str]) -> Optional[dict]:
     if not hooks_store.is_enabled():
         return {"ok": False, "error": "hooks выключены в настройках", "code": "disabled"}
     if not hooks_store.check_secret(secret_h, secret_q):
         return {"ok": False, "error": "неверный X-LZT-Hook-Secret", "code": "unauthorized"}
     return None
+
+
+def _auth_pending_complete(
+    request: Request,
+    secret_h: Optional[str],
+    secret_q: Optional[str],
+) -> Optional[dict]:
+    """pending/complete: secret предпочтителен; loopback UI допускается без secret."""
+    if not hooks_store.is_enabled():
+        return {"ok": False, "error": "hooks выключены в настройках", "code": "disabled"}
+    if hooks_store.check_secret(secret_h, secret_q):
+        return None
+    if _is_loopback(request):
+        return None
+    return {"ok": False, "error": "неверный X-LZT-Hook-Secret", "code": "unauthorized"}
 
 
 @router.get("/api/hooks/info")
@@ -85,7 +105,8 @@ def hooks_info():
         "secret": secret,
         "hooks_dir": _HOOKS_DIR,
         "stats": hooks_store.stats(),
-        "hint": "POST JSON {event, data, scenario_id?, wait?} + заголовок X-LZT-Hook-Secret",
+        "hint": "POST JSON {event, data, scenario_id?, wait?} + заголовок X-LZT-Hook-Secret. pending/complete тоже с secret (кроме 127.0.0.1).",
+        "warning": "Не открывайте порт hooks наружу без secret. /event ограничен rate-limit.",
     }
 
 
@@ -110,12 +131,23 @@ async def hooks_settings(request: Request):
 @router.post("/api/hooks/event")
 def hooks_event(
     payload: HookEventPayload,
+    request: Request,
     x_lzt_hook_secret: Optional[str] = Header(None),
     secret: Optional[str] = Query(None),
 ):
     err = _auth(x_lzt_hook_secret, secret)
     if err:
         return err
+
+    client_ip = request.client.host if request.client else "unknown"
+    ok_rl, retry_after = hooks_store.check_event_rate(client_ip)
+    if not ok_rl:
+        return {
+            "ok": False,
+            "error": "rate limit — слишком много webhook-событий",
+            "code": "rate_limit",
+            "retry_after": retry_after,
+        }
 
     data = payload.data
     if data is None:
@@ -136,12 +168,14 @@ def hooks_event(
 
 @router.get("/api/hooks/pending")
 def hooks_pending(
+    request: Request,
     x_lzt_hook_secret: Optional[str] = Header(None),
     secret: Optional[str] = Query(None),
 ):
-    """Забирает одну задачу для UI-воркера (без секрета — только localhost UI)."""
-    # UI poller без секрета: только с loopback-клиента смысла нет ограничивать жёстко —
-    # секрет нужен внешним отправителям. Pending открыт локально.
+    """Забирает одну задачу для UI-воркера."""
+    err = _auth_pending_complete(request, x_lzt_hook_secret, secret)
+    if err:
+        return err
     job = hooks_store.pop_pending()
     if not job:
         return {"ok": True, "job": None}
@@ -149,7 +183,16 @@ def hooks_pending(
 
 
 @router.post("/api/hooks/complete/{job_id}")
-def hooks_complete(job_id: str, payload: HookCompletePayload):
+def hooks_complete(
+    job_id: str,
+    payload: HookCompletePayload,
+    request: Request,
+    x_lzt_hook_secret: Optional[str] = Header(None),
+    secret: Optional[str] = Query(None),
+):
+    err = _auth_pending_complete(request, x_lzt_hook_secret, secret)
+    if err:
+        return err
     if not hooks_store.complete_job(job_id, payload.ok, payload.result, payload.error):
         return {"ok": False, "error": "job not found"}
     return {"ok": True}

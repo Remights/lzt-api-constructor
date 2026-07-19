@@ -2,7 +2,7 @@
 (function () {
     "use strict";
 
-    const APP_VERSION = "1.2.0";
+    const APP_VERSION = "1.3.0";
     const TABS_KEY = "lzt_scenario_tabs";
     const SPEND_KEY = "lzt_profit_tracker";
 
@@ -23,12 +23,33 @@
         el.id = "profit-widget";
         el.className = "profit-widget";
         el.innerHTML = `<div class="profit-row"><span><i class="fa-solid fa-wallet"></i> <span data-i18n="profit.session">Потрачено (сессия)</span></span><b id="profit-spent">0 ₽</b></div>
-            <div class="profit-row"><span><i class="fa-solid fa-chart-line"></i> <span data-i18n="profit.total">Всего (учёт)</span></span><b id="profit-total">0 ₽</b></div>`;
+            <div class="profit-row"><span><i class="fa-solid fa-chart-line"></i> <span data-i18n="profit.total">Всего (учёт)</span></span><b id="profit-total">0 ₽</b></div>
+            <div class="profit-row run-dash-row"><span><i class="fa-solid fa-gauge-high"></i> Прогон</span><b id="run-dash-stats">0 req · 0×429 · 0₽</b></div>`;
         const anchor = runBox.querySelector(".run-log-section");
         if (anchor) runBox.insertBefore(el, anchor);
         else runBox.appendChild(el);
         if (window.I18N) I18N.apply();
         return el;
+    }
+
+    function updateRunDash(stats) {
+        ensureProfitWidget();
+        const el = document.getElementById("run-dash-stats");
+        if (!el || !stats) return;
+        const req = (stats.reqOk || 0) + (stats.reqErr || 0);
+        const r429 = stats.rate429 || 0;
+        const spent = Number(stats.spent || 0);
+        el.textContent = `${req} req · ${r429}×429 · ${spent.toFixed(0)}₽`;
+        const wrap = document.getElementById("profit-widget");
+        if (wrap) wrap.classList.add("is-visible");
+        if (r429 >= 3 && window.LZTToast) {
+            const key = "_toast429";
+            if (!window[key]) {
+                window[key] = true;
+                LZTToast("Лимит API", "Много ответов 429 — снизьте частоту запросов", { type: "warn" });
+                setTimeout(() => { window[key] = false; }, 30000);
+            }
+        }
     }
 
     function refreshProfitVisibility(sessionSpent) {
@@ -137,6 +158,7 @@
             if (!S || !st.tabs[st.active]) return;
             st.tabs[st.active].title = S.title;
             st.tabs[st.active].data = S.serialize();
+            st.tabs[st.active].demoMode = !!S._scenarioIsDemo;
             saveTabsState(st);
         };
 
@@ -145,7 +167,7 @@
             persistCurrent();
             st.active = i;
             saveTabsState(st);
-            S.load(st.tabs[i].data, { keepView: true });
+            S.load(st.tabs[i].data, { keepView: true, demo: !!st.tabs[i].demoMode });
             renderTabs();
         };
 
@@ -156,7 +178,7 @@
             if (i < st.active) st.active--;
             else if (st.active >= st.tabs.length) st.active = st.tabs.length - 1;
             saveTabsState(st);
-            S.load(st.tabs[st.active].data, { keepView: true });
+            S.load(st.tabs[st.active].data, { keepView: true, demo: !!st.tabs[st.active].demoMode });
             renderTabs();
         };
 
@@ -181,6 +203,8 @@
             st.active = st.tabs.length - 1;
             saveTabsState(st);
             S.load(data, { keepView: !!opts.keepView, demo: !!(opts.demo || data.isDemo || data._demo) });
+            st.tabs[st.active].demoMode = !!S._scenarioIsDemo;
+            saveTabsState(st);
         };
 
         bar.querySelector("#btn-new-tab").addEventListener("click", addNewTab);
@@ -267,7 +291,8 @@
             <div class="add-block-cat">${t("share.cat.sharing", "Шаринг")}</div>
             <div class="add-block-item" data-share="code"><span class="add-block-ico" style="color:#9b59b6;"><i class="fa-solid fa-qrcode"></i></span><span class="add-block-txt"><b>${t("share.code.label", "Код сценария")}</b><small>${t("share.code.desc", "")}</small></span></div>
             <div class="add-block-item" data-share="qr"><span class="add-block-ico" style="color:#e67e22;"><i class="fa-solid fa-qrcode"></i></span><span class="add-block-txt"><b>${t("share.qr.label", "QR-код сценария")}</b><small>${t("share.qr.desc", "")}</small></span></div>
-            <div class="add-block-item" data-share="import-code"><span class="add-block-ico" style="color:#3498db;"><i class="fa-solid fa-paste"></i></span><span class="add-block-txt"><b>${t("share.importCode.label", "Импорт по коду")}</b><small>${t("share.importCode.desc", "")}</small></span></div>`);
+            <div class="add-block-item" data-share="import-code"><span class="add-block-ico" style="color:#3498db;"><i class="fa-solid fa-paste"></i></span><span class="add-block-txt"><b>${t("share.importCode.label", "Импорт по коду")}</b><small>${t("share.importCode.desc", "")}</small></span></div>
+            <div class="add-block-item" data-share="import-url"><span class="add-block-ico" style="color:#1abc9c;"><i class="fa-solid fa-link"></i></span><span class="add-block-txt"><b>${t("share.importUrl.label", "Импорт по URL")}</b><small>${t("share.importUrl.desc", "JSON или LZT1 по ссылке")}</small></span></div>`);
     }
 
     function bindGallery() {
@@ -307,6 +332,30 @@
                     S.flash("Сценарий импортирован по коду", "ok");
                 } catch (err) {
                     S.flash("Неверный код сценария", "err");
+                }
+            } else if (k === "import-url" && S) {
+                const url = await LZTDialog.prompt("URL JSON или raw (gist/paste):", "https://", { title: "Импорт по URL", okText: "Загрузить" });
+                if (!url || url === "https://") return;
+                try {
+                    const r = await fetch("/api/import-url", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ url }),
+                    });
+                    const j = await r.json();
+                    if (!j.ok) throw new Error(j.error || "ошибка загрузки");
+                    let data;
+                    const raw = String(j.content || "").trim();
+                    if (/^LZT1:/i.test(raw) || /^[A-Za-z0-9+/=_-]{20,}$/.test(raw.replace(/^LZT1:/i, ""))) {
+                        data = decodeShare(raw);
+                    } else {
+                        data = JSON.parse(raw);
+                    }
+                    if (S.hasMeaningfulWork && S.hasMeaningfulWork() && !await LZTDialog.confirm("Заменить текущий сценарий?", { title: "Импорт по URL", okText: "Заменить", danger: true })) return;
+                    S.load(data);
+                    S.flash("Сценарий импортирован по URL", "ok");
+                } catch (err) {
+                    S.flash("Импорт URL: " + (err.message || err), "err");
                 }
             }
         });
@@ -586,6 +635,7 @@
 
     window.LZTFeatures = Object.assign(window.LZTFeatures || {}, {
         updateProfit,
+        updateRunDash,
         encodeShare,
         decodeShare,
         APP_VERSION,

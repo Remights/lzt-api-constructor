@@ -51,6 +51,8 @@
                 </div>
                 <div class="accordion-content">
                     <div class="sidebar-section-title"><i class="fa-solid fa-diagram-project" style="color: var(--lzt-green);"></i> <span data-i18n="sidebar.readyScenarios">Готовые сценарии</span></div>
+                    <p class="sidebar-claim" data-i18n="sidebar.claim">No-code клиент Market + Forum API · OpenAPI · прогон · codegen ×7</p>
+                    <p class="sidebar-hint-sm" data-i18n="sidebar.readyHint">Скачал → токен в Старт → Запустить</p>
                     <ul id="scenario-examples-list" class="sidebar-list"></ul>
 
                     <div class="sidebar-section-title" style="margin-top: 12px;" data-i18n="sidebar.blocksMarket">Блоки-запросы: Маркет</div>
@@ -92,7 +94,7 @@
                     <button id="btn-share" class="btn-token" data-i18n-title="toolbar.exportTitle" title="Экспорт и шаринг сценария"><i class="fa-solid fa-share-nodes"></i> <span data-i18n="toolbar.exportBtn">Экспорт</span> <i class="fa-solid fa-caret-down" style="font-size:10px;"></i></button>
                     <button id="btn-import-scn" class="btn-token" data-i18n-title="toolbar.import" title="Импорт сценария из файла .json"><i class="fa-solid fa-file-import"></i></button>
                     <button id="btn-import-curl" class="btn-token" title="Импорт из curl-команды"><i class="fa-solid fa-terminal"></i></button>
-                    <button id="btn-ai-assistant" class="btn-token btn-ai" title="AI-ассистент: собрать сценарий по описанию"><i class="fa-solid fa-wand-magic-sparkles"></i> AI</button>
+                    <button id="btn-ai-assistant" class="btn-token btn-ai" title="AI-ассистент: собрать сценарий по описанию. Может ошибаться — проверяйте блоки перед запуском."><i class="fa-solid fa-wand-magic-sparkles"></i> AI</button>
                     <button id="btn-help-tour" class="btn-token" data-i18n-title="toolbar.help" title="Как пользоваться (обучение)"><i class="fa-solid fa-circle-question"></i></button>
                     <input type="file" id="import-scn-input" accept="application/json,.json" style="display:none;">
                     <div id="add-block-menu" class="add-block-menu" style="display: none;"></div>
@@ -278,6 +280,11 @@
                     <label class="step-toggle"><input type="checkbox" id="set-panel-script" checked> <span data-i18n="settings.panelScript">Скрипт (codegen)</span></label>
                 </div>
                 <button id="set-replay-tour" class="btn-sidebar-action" style="margin-top: 6px;"><i class="fa-solid fa-graduation-cap"></i> <span data-i18n="settings.replayTour">Показать обучение снова</span></button>
+                <div class="form-group" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border-color);">
+                    <label><i class="fa-solid fa-crown" style="color:#e6a23c;"></i> Pro AI (license)</label>
+                    <p class="settings-hint">Ключ повышает лимит бесплатного AI на сервере (если настроен LZT_PRO_LICENSE_KEYS). MIT-код остаётся открытым.</p>
+                    <input type="password" class="form-control" id="set-pro-license" placeholder="Pro license key" style="font-size:12px;">
+                </div>
                 <div class="form-group settings-hooks" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border-color);">
                     <label><i class="fa-solid fa-plug" style="color:var(--lzt-green);"></i> Webhooks / хуки</label>
                     <p class="settings-hint">Внешний софт шлёт JSON сюда → сценарий гоняет блоки → ответ обратно. В сценарии данные в <code>vars.hook</code>, ответ положи в <code>vars.hook_response</code>.</p>
@@ -341,6 +348,10 @@
                         Опишите задачу простым языком — ассистент соберёт готовый сценарий из блоков. Например:
                         <i>«каждые 5 минут ищи стим дешевле 100р, фильтруй по цене и шли уведомление в телеграм»</i>.
                     </p>
+                    <p class="ai-disclaimer" id="ai-modal-disclaimer" role="note">
+                        <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                        AI-ассистент может ошибаться. Проверяйте блоки, URL и связи перед запуском — особенно покупки и посты на форуме.
+                    </p>
                     <div class="ai-mode-row">
                         <label class="ai-mode"><input type="radio" name="ai-mode" value="free" checked> <b>Бесплатно</b></label>
                         <label class="ai-mode"><input type="radio" name="ai-mode" value="api"> <b>Свой ключ</b></label>
@@ -351,6 +362,7 @@
                             <select id="ai-free-model" class="form-control" style="cursor:pointer;"></select>
                         </div>
                         <span id="ai-limit-info" class="ai-limit-hint"></span>
+                        <p class="ai-disclaimer ai-disclaimer-compact">Бесплатные модели слабее: сложные задачи (форум, автоответ, длинные цепочки) часто собирают криво.</p>
                     </div>
                     <div id="ai-api-settings" class="ai-settings-panel" style="display:none;">
                         <div class="form-group" style="margin-bottom:8px;">
@@ -390,6 +402,7 @@
                             </button>
                         </div>
                     </div>
+                    <p class="ai-disclaimer ai-disclaimer-foot">Сгенерированный сценарий — черновик. Проверьте перед Run.</p>
                 </div>
             </div>
         </div>
@@ -455,6 +468,8 @@
     <script src="js/codegen.js"></script>
     <script src="js/constructor.js"></script>
     <script src="js/req_param_hints.js"></script>
+    <script src="js/path_picker.js"></script>
+    <script src="js/endpoint_picker.js"></script>
     <script src="js/scenario/constants.js"></script>
     <script src="js/demo.js"></script>
     <script src="js/price_analyzer.js"></script>
@@ -484,6 +499,7 @@
     <script src="js/exporters.js"></script>
     <script src="js/assistant.js"></script>
     <script src="js/ai_plus.js"></script>
+    <script src="js/token_profiles.js"></script>
     <script src="js/features.js"></script>
     <script src="js/hooks.js"></script>
     <script src="js/panels.js"></script>

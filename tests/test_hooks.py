@@ -88,6 +88,38 @@ def test_hooks_wait_sync(client):
     assert data.get("result", {}).get("echo", {}).get("x") == 1
 
 
+def test_hooks_pending_requires_secret_when_not_loopback(client):
+    # TestClient is loopback — secret optional; event still needs secret
+    r = client.post(
+        "/api/hooks/event",
+        json={"event": "x", "data": {}, "wait": False},
+        headers={"X-LZT-Hook-Secret": "test-secret-hooks-1"},
+    )
+    assert r.json().get("ok") is True
+    pend = client.get(
+        "/api/hooks/pending",
+        headers={"X-LZT-Hook-Secret": "test-secret-hooks-1"},
+    ).json()
+    assert pend.get("job")
+
+
+def test_hooks_event_rate_limit(client):
+    hooks_store._EVENT_HITS.clear()
+    # temporarily lower limit
+    old = hooks_store._EVENT_LIMIT
+    hooks_store._EVENT_LIMIT = 3
+    try:
+        headers = {"X-LZT-Hook-Secret": "test-secret-hooks-1"}
+        for _ in range(3):
+            r = client.post("/api/hooks/event", json={"event": "rl", "data": {}, "wait": False}, headers=headers)
+            assert r.json().get("ok") is True
+        r = client.post("/api/hooks/event", json={"event": "rl", "data": {}, "wait": False}, headers=headers)
+        assert r.json().get("code") == "rate_limit"
+    finally:
+        hooks_store._EVENT_LIMIT = old
+        hooks_store._EVENT_HITS.clear()
+
+
 def test_hooks_script_example(client):
     lst = client.get("/api/hooks/scripts").json()
     assert "hook_example.py" in lst.get("files", [])

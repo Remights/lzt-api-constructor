@@ -69,5 +69,17 @@ ok("resolveVars: подстановка {{vars.name}}", () => {
     assert.strictEqual(out, "Hello LZT!");
 });
 
+ok("lztResponseOk: HTTP 200 + errors = fail", () => {
+    assert.strictEqual(E.lztResponseOk(200, { errors: [{ message: "x" }] }), false);
+    assert.strictEqual(E.lztResponseOk(200, { error: "no" }), false);
+    assert.strictEqual(E.lztResponseOk(200, { items: [] }), true);
+    assert.strictEqual(E.lztResponseOk(400, {}), false);
+});
+
+ok("isRetryRequest", () => {
+    assert.strictEqual(E.isRetryRequest({ errors: [{ message: "retry_request" }] }), true);
+    assert.strictEqual(E.isRetryRequest({ ok: true }), false);
+});
+
 console.log("\n" + passed + " passed");
-if (passed !== 7) process.exit(1);
+if (passed !== 9) process.exit(1);

@@ -7,10 +7,15 @@
     R().register("logmsg", ({ sc, node, pop, dismiss, esc }) => {
         pop.innerHTML = `<div class="pop-title"><i class="fa-solid fa-comment-dots" style="color:#7f8c8d;"></i> Сообщение в лог</div>
             <label class="pop-label">Текст сообщения</label>
-            <textarea class="form-control" id="pop-text" rows="3" placeholder="Найдено {{last.items.length}} лотов">${esc(node.logmsg.text)}</textarea>
-            <div class="pop-hint">Можно вставлять данные из ответа: <code>{{last.items.length}}</code>, <code>{{vars.item_id}}</code>.</div>
+            <div class="pop-field-row">
+                <textarea class="form-control" id="pop-text" rows="3" placeholder="Найдено {{last.items.length}} лотов">${esc(node.logmsg.text)}</textarea>
+            </div>
+            <div class="pop-hint">Вставьте vars/поля кнопкой «Выбрать» или чипами ниже.</div>
             <div class="pop-actions"><button class="btn-save" id="pop-ok">Готово</button></div>`;
         document.body.appendChild(pop);
+        const ta = pop.querySelector("#pop-text");
+        window.LZTPathPicker?.bind(ta, { sc, nodeId: node.id, insertMode: "mustache", mode: "condition" });
+        window.LZTPathPicker?.bindChips(ta, { sc, mode: "condition" });
         pop.querySelector("#pop-ok").addEventListener("click", () => {
             node.logmsg.text = pop.querySelector("#pop-text").value;
             dismiss();
@@ -26,7 +31,9 @@
         pop.innerHTML = `<div class="pop-title"><i class="fa-solid fa-file-arrow-down" style="color:#27ae60;"></i> Сохранить в файл</div>
             <div class="pop-intro">Выгружает данные из ответа в файл. Список объектов удобно сохранять в CSV (откроется в Excel), любые данные — в JSON.</div>
             <label class="pop-label">Что сохранить (путь в ответе)</label>
-            <input type="text" class="form-control" id="pop-source" value="${esc(s.source)}" placeholder="last.items или vars.filtered">
+            <div class="pop-field-row">
+                <input type="text" class="form-control" id="pop-source" value="${esc(s.source)}" placeholder="last.items или vars.filtered">
+            </div>
             <label class="pop-label" style="margin-top:10px;">Формат файла</label>
             <select class="form-control" id="pop-format">
                 <option value="csv" ${s.format === "csv" ? "selected" : ""}>CSV (таблица для Excel)</option>
@@ -37,6 +44,7 @@
             <div class="pop-hint">Файл скачается при выполнении сценария. Источник — список объектов, напр. <code>last.items</code> или <code>vars.filtered</code>.</div>
             <div class="pop-actions"><button class="btn-save" id="pop-ok">Готово</button></div>`;
         document.body.appendChild(pop);
+        window.LZTPathPicker?.bind(pop.querySelector("#pop-source"), { sc, nodeId: node.id, insertMode: "path", preferLists: true, mode: "list" });
         pop.querySelector("#pop-ok").addEventListener("click", () => {
             s.source = pop.querySelector("#pop-source").value.trim() || "last.items";
             s.format = pop.querySelector("#pop-format").value;
@@ -109,7 +117,8 @@
                 <option value="both" ${n.channel === "both" ? "selected" : ""}>Telegram + Discord</option>
             </select>
             <div id="pop-tg-fields">
-                <label class="pop-label" style="margin-top:10px;">Токен Telegram-бота <a href="#" id="pop-tg-help" class="pop-inline-link">(как получить?)</a></label>
+                <div class="pop-hint" id="pop-tg-wizard" style="margin-top:10px;">Мастер TG: 1) откройте <a href="#" id="pop-tg-help" class="pop-inline-link">@BotFather</a> → /newbot → скопируйте token. 2) Напишите боту любое сообщение. 3) Узнайте chat_id через @userinfobot и вставьте ниже.</div>
+                <label class="pop-label" style="margin-top:10px;">Токен Telegram-бота</label>
                 <input type="text" class="form-control" id="pop-tgtoken" value="${esc(n.tgToken)}" placeholder="123456:ABC-DEF...">
                 <label class="pop-label" style="margin-top:8px;">Ваш chat_id</label>
                 <input type="text" class="form-control" id="pop-tgchat" value="${esc(n.tgChat)}" placeholder="напр. 123456789">
@@ -119,10 +128,15 @@
                 <input type="text" class="form-control" id="pop-dcurl" value="${esc(n.discordUrl)}" placeholder="https://discord.com/api/webhooks/...">
             </div>
             <label class="pop-label" style="margin-top:10px;">Текст сообщения</label>
-            <textarea class="form-control" id="pop-text" rows="2" placeholder="Найдено {{last.items.length}} лотов!">${esc(n.text)}</textarea>
-            <div class="pop-hint">Можно вставлять <code>{{last...}}</code> и <code>{{vars...}}</code>.</div>
+            <div class="pop-field-row">
+                <textarea class="form-control" id="pop-text" rows="2" placeholder="Найдено {{last.items.length}} лотов!">${esc(n.text)}</textarea>
+            </div>
+            <div class="pop-hint">Вставьте vars/поля кнопкой «Выбрать» или чипами.</div>
             <div class="pop-actions"><button class="btn-save" id="pop-ok">Готово</button></div>`;
         document.body.appendChild(pop);
+        const ta = pop.querySelector("#pop-text");
+        window.LZTPathPicker?.bind(ta, { sc, nodeId: node.id, insertMode: "mustache", mode: "condition" });
+        window.LZTPathPicker?.bindChips(ta, { sc, mode: "condition" });
         const chSel = pop.querySelector("#pop-channel");
         const tgF = pop.querySelector("#pop-tg-fields");
         const dcF = pop.querySelector("#pop-dc-fields");

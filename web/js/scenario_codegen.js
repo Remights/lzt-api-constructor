@@ -29,7 +29,37 @@
         const out = document.getElementById("script-output");
         if (!out) return;
         out.textContent = this.generateScriptForLang(this.scriptLang);
+        this._updateCodegenLimitationsBanner();
         if (typeof window.rebuildShareMenu === "function") window.rebuildShareMenu();
+    },
+
+    codegenLimitations() {
+        const types = new Set((this.nodes || []).map((n) => n.type));
+        const lim = [];
+        if (types.has("ai")) lim.push({ type: "ai", label: "ИИ" });
+        if (types.has("script")) lim.push({ type: "script", label: "Скрипт" });
+        if (types.has("subscenario")) lim.push({ type: "subscenario", label: "Под-сценарий" });
+        if (types.has("proxy")) lim.push({ type: "proxy", label: "Прокси (частично)" });
+        return lim;
+    },
+
+    _updateCodegenLimitationsBanner() {
+        let ban = document.getElementById("codegen-limits-banner");
+        const host = document.getElementById("script-output")?.parentElement;
+        if (!host) return;
+        const lim = this.codegenLimitations();
+        if (!lim.length) {
+            if (ban) ban.remove();
+            return;
+        }
+        if (!ban) {
+            ban = document.createElement("div");
+            ban.id = "codegen-limits-banner";
+            ban.className = "codegen-limits-banner";
+            host.insertBefore(ban, document.getElementById("script-output"));
+        }
+        const names = lim.map((l) => l.label).join(", ");
+        ban.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> В сценарии есть блоки <b>${names}</b> — в экспорте они заглушки. Полный прогон только в Constructor.`;
     },
 
     zipLangMeta(lang) {
@@ -196,7 +226,7 @@
         L.push("");
         L.push(`node = ${startTarget ? this.py(startTarget) : "None"}`);
         L.push("steps = 0");
-        L.push("while node and steps < 300:");
+        L.push("while node and steps < 2000:");
         L.push("    steps += 1");
 
         const reqNodes = this.nodes.filter(n => n.type !== "start");
@@ -229,7 +259,8 @@
                 L.push("        except: context['last'] = None");
                 const succ = this.edgeTarget(node.id, "success");
                 const err = this.edgeTarget(node.id, "error");
-                L.push(`        node = ${succ ? this.py(succ) : "None"} if r.ok else ${this._errNext(node.id, "error")}`);
+                L.push("        _ok = r.ok and not (isinstance(context['last'], dict) and (context['last'].get('errors') or context['last'].get('error')))");
+                L.push(`        node = ${succ ? this.py(succ) : "None"} if _ok else ${this._errNext(node.id, "error")}`);
             } else if (node.type === "condition") {
                 const c = node.condition;
                 const t = this.edgeTarget(node.id, "true");
@@ -452,7 +483,7 @@
         L.push(`    node = ${startTarget ? this.py(startTarget) : "None"}`);
         L.push("    steps = 0");
         L.push("    async with aiohttp.ClientSession(headers=HEADERS) as session:");
-        L.push("        while node and steps < 300:");
+        L.push("        while node and steps < 2000:");
         L.push("            steps += 1");
         let first = true;
         this.nodes.forEach(node => {
@@ -479,7 +510,7 @@
                 L.push(`                        print("[${req.method}]", url, "->", r.status)`);
                 L.push("                        try: context['last'] = await r.json(content_type=None)");
                 L.push("                        except: context['last'] = None");
-                L.push("                        ok = r.status < 400");
+                L.push("                        ok = r.status < 400 and not (isinstance(context['last'], dict) and (context['last'].get('errors') or context['last'].get('error')))");
                 L.push(`                except Exception as _ex:`);
                 L.push(`                    print('Ошибка запроса:', _ex); context['last'] = None; ok = False`);
                 L.push(`                node = ${succ ? this.py(succ) : "None"} if ok else ${this._errNext(node.id, "error")}`);
@@ -607,7 +638,7 @@
         L.push("(async () => {");
         L.push(`  let node = ${startTarget ? this.py(startTarget) : "null"};`);
         L.push("  let steps = 0;");
-        L.push("  while (node && steps < 300) {");
+        L.push("  while (node && steps < 2000) {");
         L.push("    steps++;");
         this.nodes.forEach(node => {
             if (node.type === "start") return;
@@ -628,7 +659,8 @@
                     L.push(`        const r = await axios({ method: ${this.py((req.method || "GET").toLowerCase())}, url, params, headers: _hdr });`);
                 }
                 L.push(`        console.log("[${req.method}]", url, "->", r.status);`);
-                L.push("        context.last = r.data; ok = r.status < 400;");
+                L.push("        context.last = r.data; const _d = r.data;");
+                L.push("        ok = r.status < 400 && !(_d && typeof _d === 'object' && ((_d.errors && _d.errors.length) || _d.error));");
                 L.push("      } catch (e) { context.last = e.response ? e.response.data : null; ok = false; }");
                 L.push(`      node = ok ? ${succ ? this.py(succ) : "null"} : ${this._errNextJs(node.id, "error")};`);
             } else if (node.type === "condition") {
@@ -945,7 +977,7 @@
         L.push("");
         L.push(`$node = ${startTarget ? this.py(startTarget) : "null"};`);
         L.push("$steps = 0;");
-        L.push("while ($node !== null && $steps < 300) {");
+        L.push("while ($node !== null && $steps < 2000) {");
         L.push("    $steps++;");
         this.nodes.forEach(node => {
             if (node.type === "start") return;
@@ -960,7 +992,9 @@
                 L.push(`        $r = api_call(${this.py(req.method || "GET")}, $url, $params, $body, $TOKEN);`);
                 L.push(`        echo "[${req.method}] $url -> {$r['code']}\\n";`);
                 L.push("        $context['last'] = $r['data'];");
-                L.push(`        $node = $r['code'] < 400 ? ${succ ? this.py(succ) : "null"} : ${this._errNextPhp(node.id, "error")};`);
+                L.push("        $_bd = is_array($r['data'] ?? null) ? $r['data'] : [];");
+                L.push("        $_ok = (($r['code'] ?? 0) < 400) && empty($_bd['errors']) && empty($_bd['error']);");
+                L.push(`        $node = $_ok ? ${succ ? this.py(succ) : "null"} : ${this._errNextPhp(node.id, "error")};`);
             } else if (node.type === "condition") {
                 const c = node.condition;
                 const t = this.edgeTarget(node.id, "true");
@@ -1145,7 +1179,7 @@
         L.push('        http.DefaultRequestHeaders.Add("Authorization", "Bearer " + TOKEN);');
         L.push(`        string node = ${startTarget ? this.py(startTarget) : "null"};`);
         L.push("        int steps = 0;");
-        L.push("        while (node != null && steps < 300) {");
+        L.push("        while (node != null && steps < 2000) {");
         L.push("            steps++;");
         this.nodes.forEach(node => {
             if (node.type === "start") return;
@@ -1167,7 +1201,12 @@
                 L.push("                var text = await resp.Content.ReadAsStringAsync();");
                 L.push(`                Console.WriteLine($"[${req.method}] {url} -> {(int)resp.StatusCode}");`);
                 L.push("                try { last = JsonSerializer.Deserialize<JsonElement>(text); } catch { last = null; }");
-                L.push(`                node = resp.IsSuccessStatusCode ? ${succ ? this.py(succ) : "null"} : ${this._errNextCs(node.id, "error")};`);
+                L.push("                bool _ok = resp.IsSuccessStatusCode;");
+                L.push("                if (_ok && last.HasValue && last.Value.ValueKind == JsonValueKind.Object) {");
+                L.push("                    if (last.Value.TryGetProperty(\"errors\", out var _be) && _be.ValueKind == JsonValueKind.Array && _be.GetArrayLength() > 0) _ok = false;");
+                L.push("                    if (last.Value.TryGetProperty(\"error\", out _)) _ok = false;");
+                L.push("                }");
+                L.push(`                node = _ok ? ${succ ? this.py(succ) : "null"} : ${this._errNextCs(node.id, "error")};`);
             } else if (node.type === "condition") {
                 const c = node.condition;
                 const t = this.edgeTarget(node.id, "true");
@@ -1384,7 +1423,7 @@
         L.push("func main() {");
         L.push(`\tnode := ${startTarget ? this.py(startTarget) : '""'}`);
         L.push("\tsteps := 0");
-        L.push("\tfor node != \"\" && steps < 300 {");
+        L.push("\tfor node != \"\" && steps < 2000 {");
         L.push("\t\tsteps++");
         L.push("\t\tswitch node {");
         this.nodes.forEach(node => {
@@ -1398,7 +1437,9 @@
                 L.push(`\t\t\tcode, data := apiCall(${this.py(req.method || "GET")}, ${this.py(req.url)}, params, body)`);
                 L.push(`\t\t\tfmt.Printf("[${req.method}] %s -> %d\\n", resolve(${this.py(req.url)}), code)`);
                 L.push("\t\t\tctx.Last = data");
-                L.push(`\t\t\tif code < 400 { node = ${succ ? this.py(succ) : '""'} } else { node = ${this._errNextGo(node.id, "error")} }`);
+                L.push("\t\t\t_, hasErr := data[\"error\"]; errs, _ := data[\"errors\"].([]interface{})");
+                L.push("\t\t\tok := code > 0 && code < 400 && !hasErr && len(errs) == 0");
+                L.push(`\t\t\tif ok { node = ${succ ? this.py(succ) : '""'} } else { node = ${this._errNextGo(node.id, "error")} }`);
             } else if (node.type === "condition") {
                 const c = node.condition;
                 const t = this.edgeTarget(node.id, "true");
@@ -1681,6 +1722,95 @@
             const bought = et("bought"), skip = et("skip"), fail = et("fail");
             const skipN = skip ? py(skip) : null;
             const failN = fail ? py(fail) : skipN;
+            // dry-run: только лог кандидата, без POST /fast-buy (важно для демо-экспорта)
+            if (sn.dryRun) {
+                if (lang === "py" || lang === "pyasync") {
+                    L.push(`${I}context['vars'].setdefault('_lzt_spend', 0)`);
+                    L.push(`${I}_items = get_path(context, ${py(sn.source)}) or []`);
+                    L.push(`${I}_rawp = resolve(${py(String(sn.maxPrice))}); _raws = resolve(${py(String(sn.maxSpend))})`);
+                    L.push(`${I}_maxp = float(_rawp) if str(_rawp).strip() != '' else float('inf')`);
+                    L.push(`${I}_maxs = float(_raws) if str(_raws).strip() != '' else float('inf')`);
+                    L.push(`${I}node = ${skipN || "None"}`);
+                    L.push(`${I}for _it in (_items if isinstance(_items, list) else []):`);
+                    L.push(`${I}    _price = float(_it.get(${py(sn.priceField || "price")}, 0) or 0)`);
+                    L.push(`${I}    _iid = _it.get(${py(sn.itemField || "item_id")})`);
+                    L.push(`${I}    if not _iid or _price > _maxp or context['vars']['_lzt_spend'] + _price > _maxs: continue`);
+                    L.push(`${I}    print(f"[dry-run] купил бы {_iid} за {_price}")`);
+                    L.push(`${I}    node = ${bought ? py(bought) : "None"}; break`);
+                } else if (lang === "node") {
+                    L.push(`${I}context.vars._lzt_spend = context.vars._lzt_spend || 0;`);
+                    L.push(`${I}const _items = getPath(context, ${py(sn.source)}) || [];`);
+                    L.push(`${I}const _rp = resolve(String(${py(String(sn.maxPrice))})); const _rs = resolve(String(${py(String(sn.maxSpend))}));`);
+                    L.push(`${I}const _maxp = _rp === "" || isNaN(parseFloat(_rp)) ? Infinity : parseFloat(_rp);`);
+                    L.push(`${I}const _maxs = _rs === "" || isNaN(parseFloat(_rs)) ? Infinity : parseFloat(_rs);`);
+                    L.push(`${I}node = ${skipN || "null"};`);
+                    L.push(`${I}for (const _it of _items) {`);
+                    L.push(`${I}  const _p = parseFloat(_it[${py(sn.priceField || "price")}] || 0);`);
+                    L.push(`${I}  const _id = _it[${py(sn.itemField || "item_id")}];`);
+                    L.push(`${I}  if (!_id || _p > _maxp || context.vars._lzt_spend + _p > _maxs) continue;`);
+                    L.push(`${I}  console.log("[dry-run] купил бы", _id, "за", _p);`);
+                    L.push(`${I}  node = ${bought ? py(bought) : "null"}; break;`);
+                    L.push(`${I}}`);
+                } else if (lang === "bash") {
+                    L.push(`${I}VARS[_lzt_spend]=${"${VARS[_lzt_spend]:-0}"}`);
+                    L.push(`${I}_items=$(get_path ${py(sn.source)})`);
+                    L.push(`${I}_maxp=$(resolve ${py(String(sn.maxPrice))}); _maxs=$(resolve ${py(String(sn.maxSpend))})`);
+                    L.push(`${I}[[ -z "$_maxp" ]] && _maxp=1e18; [[ -z "$_maxs" ]] && _maxs=1e18`);
+                    L.push(`${I}node=${skipN || '""'}`);
+                    L.push(`${I}_len=$(echo "$_items" | jq 'if type=="array" then length else 0 end' 2>/dev/null || echo 0)`);
+                    L.push(`${I}for ((i=0; i<_len; i++)); do`);
+                    L.push(`${I}  _iid=$(echo "$_items" | jq -r ".[$i].${sn.itemField || "item_id"} // empty")`);
+                    L.push(`${I}  _price=$(echo "$_items" | jq -r ".[$i].${sn.priceField || "price"} // 0")`);
+                    L.push(`${I}  [[ -z "$_iid" || "$_iid" == "null" ]] && continue`);
+                    L.push(`${I}  awk -v p="$_price" -v m="$_maxp" 'BEGIN{exit !(p+0>m+0)}' && continue`);
+                    L.push(`${I}  awk -v s="${"${VARS[_lzt_spend]:-0}"}" -v p="$_price" -v m="$_maxs" 'BEGIN{exit !(s+0+p+0>m+0)}' && continue`);
+                    L.push(`${I}  echo "[dry-run] купил бы $_iid за $_price"`);
+                    L.push(`${I}  node=${bought ? py(bought) : '""'}; break`);
+                    L.push(`${I}done`);
+                } else if (lang === "php") {
+                    L.push(`${I}if (!isset($context['vars']['_lzt_spend'])) $context['vars']['_lzt_spend'] = 0;`);
+                    L.push(`${I}$items = get_path($context, ${py(sn.source)}) ?: []; $node = ${skipN || "null"};`);
+                    L.push(`${I}$_rp = trim(strval(resolve_val(${py(String(sn.maxPrice))}))); $_rs = trim(strval(resolve_val(${py(String(sn.maxSpend))})));`);
+                    L.push(`${I}$_maxp = $_rp === '' ? INF : floatval($_rp); $_maxs = $_rs === '' ? INF : floatval($_rs);`);
+                    L.push(`${I}foreach ((array)$items as $_it) {`);
+                    L.push(`${I}  $price = floatval($_it[${py(sn.priceField || "price")}] ?? 0); $iid = $_it[${py(sn.itemField || "item_id")}] ?? null;`);
+                    L.push(`${I}  if (!$iid || $price > $_maxp || $context['vars']['_lzt_spend'] + $price > $_maxs) continue;`);
+                    L.push(`${I}  echo "[dry-run] купил бы {$iid} за {$price}\\n";`);
+                    L.push(`${I}  $node = ${bought ? py(bought) : "null"}; break;`);
+                    L.push(`${I}}`);
+                } else if (lang === "csharp") {
+                    L.push(`${I}{`);
+                    L.push(`${I}    double _spend = 0; if (vars.ContainsKey("_lzt_spend")) double.TryParse(vars["_lzt_spend"].ToString(), out _spend);`);
+                    L.push(`${I}    var _rp = Resolve(${py(String(sn.maxPrice))}); var _rs = Resolve(${py(String(sn.maxSpend))});`);
+                    L.push(`${I}    double _maxp = string.IsNullOrWhiteSpace(_rp) ? double.PositiveInfinity : (double.TryParse(_rp, out var __mp) ? __mp : double.PositiveInfinity);`);
+                    L.push(`${I}    double _maxs = string.IsNullOrWhiteSpace(_rs) ? double.PositiveInfinity : (double.TryParse(_rs, out var __ms) ? __ms : double.PositiveInfinity);`);
+                    L.push(`${I}    var _items = GetPathArray(${py(sn.source)}); node = ${skipN || "null"};`);
+                    L.push(`${I}    foreach (var _it in _items) {`);
+                    L.push(`${I}        if (_it.ValueKind != JsonValueKind.Object) continue;`);
+                    L.push(`${I}        var _iid = _it.TryGetProperty(${py(sn.itemField || "item_id")}, out var _idp) ? _idp.ToString() : "";`);
+                    L.push(`${I}        double _price = 0; if (_it.TryGetProperty(${py(sn.priceField || "price")}, out var _pp)) double.TryParse(_pp.ToString(), out _price);`);
+                    L.push(`${I}        if (string.IsNullOrEmpty(_iid) || _price > _maxp || _spend + _price > _maxs) continue;`);
+                    L.push(`${I}        Console.WriteLine($"[dry-run] купил бы {_iid} за {_price}");`);
+                    L.push(`${I}        node = ${bought ? py(bought) : "null"}; break;`);
+                    L.push(`${I}    }`);
+                    L.push(`${I}}`);
+                } else if (lang === "go") {
+                    L.push(`${I}{ if _, ok := ctx.Vars["_lzt_spend"]; !ok { ctx.Vars["_lzt_spend"] = 0.0 }`);
+                    L.push(`${I}items, _ := getPath(${py(sn.source)}).([]interface{}); node = ${skipN || "null"}`);
+                    L.push(`${I}_rawp := strings.TrimSpace(resolve(${py(String(sn.maxPrice))})); _raws := strings.TrimSpace(resolve(${py(String(sn.maxSpend))}))`);
+                    L.push(`${I}_maxp := 1e18; if _rawp != "" { _maxp = toFloat(_rawp) }`);
+                    L.push(`${I}_maxs := 1e18; if _raws != "" { _maxs = toFloat(_raws) }`);
+                    L.push(`${I}for _, it := range items { x, ok := it.(map[string]interface{}); if !ok { continue }`);
+                    L.push(`${I}  iid := fmt.Sprint(x[${py(sn.itemField || "item_id")}]); price := toFloat(x[${py(sn.priceField || "price")}])`);
+                    L.push(`${I}  if iid == "" || iid == "<nil>" || price > _maxp || toFloat(ctx.Vars["_lzt_spend"])+price > _maxs { continue }`);
+                    L.push(`${I}  fmt.Printf("[dry-run] купил бы %s за %v\\n", iid, price)`);
+                    L.push(`${I}  node = ${bought ? py(bought) : "null"}; break`);
+                    L.push(`${I}} }`);
+                } else {
+                    L.push(`${I}raise Exception("sniper unsupported")`);
+                }
+                return true;
+            }
             if (lang === "py") {
                 L.push(`${I}context['vars'].setdefault('_lzt_spend', 0)`);
                 L.push(`${I}_items = get_path(context, ${py(sn.source)}) or []`);
@@ -1693,10 +1823,15 @@
                 L.push(`${I}    _iid = _it.get(${py(sn.itemField || "item_id")})`);
                 L.push(`${I}    if not _iid or _price > _maxp or context['vars']['_lzt_spend'] + _price > _maxs: continue`);
                 L.push(`${I}    try:`);
-                L.push(`${I}        _br = do_request('POST', f"https://prod-api.lzt.market/{_iid}/fast-buy", params={"price": _price})`);
-                L.push(`${I}        try: _bj = _br.json() if _br.ok else {}`);
-                L.push(`${I}        except: _bj = {}`);
-                L.push(`${I}        _bok = _br.ok and not (_bj.get('errors') or _bj.get('error'))`);
+                L.push(`${I}        _bok = False`);
+                L.push(`${I}        for _ri in range(20):`);
+                L.push(`${I}            _br = do_request('POST', f"https://prod-api.lzt.market/{_iid}/fast-buy", data={"price": _price})`);
+                L.push(`${I}            try: _bj = _br.json()`);
+                L.push(`${I}            except: _bj = {}`);
+                L.push(`${I}            _bok = _br.ok and not (_bj.get('errors') or _bj.get('error'))`);
+                L.push(`${I}            if _bok: break`);
+                L.push(`${I}            if 'retry_request' in str(_bj).lower(): time.sleep(min(5, 0.3 + _ri * 0.2)); continue`);
+                L.push(`${I}            break`);
                 L.push(`${I}        if _bok: context['vars']['_lzt_spend'] += _price; node = ${bought ? py(bought) : "None"}; _bought = True; break`);
                 L.push(`${I}        node = ${failN || "None"}; break`);
                 L.push(`${I}    except Exception:`);
@@ -1713,12 +1848,17 @@
                 L.push(`${I}    _iid = _it.get(${py(sn.itemField || "item_id")})`);
                 L.push(`${I}    if not _iid or _price > _maxp or context['vars']['_lzt_spend'] + _price > _maxs: continue`);
                 L.push(`${I}    try:`);
-                L.push(`${I}        async with session.post(f"https://prod-api.lzt.market/{_iid}/fast-buy", params={"price": str(_price)}, proxy=cur_proxy()) as _br:`);
-                L.push(`${I}            try: _bj = await _br.json(content_type=None) if _br.status < 400 else {}`);
-                L.push(`${I}            except: _bj = {}`);
-                L.push(`${I}            _bok = _br.status < 400 and not (_bj.get('errors') or _bj.get('error'))`);
-                L.push(`${I}            if _bok: context['vars']['_lzt_spend'] += _price; node = ${bought ? py(bought) : "None"}; _bought = True; break`);
-                L.push(`${I}            node = ${failN || "None"}; break`);
+                L.push(`${I}        _bok = False`);
+                L.push(`${I}        for _ri in range(20):`);
+                L.push(`${I}            async with session.post(f"https://prod-api.lzt.market/{_iid}/fast-buy", json={"price": _price}, proxy=cur_proxy()) as _br:`);
+                L.push(`${I}                try: _bj = await _br.json(content_type=None)`);
+                L.push(`${I}                except: _bj = {}`);
+                L.push(`${I}                _bok = _br.status < 400 and not (_bj.get('errors') or _bj.get('error'))`);
+                L.push(`${I}            if _bok: break`);
+                L.push(`${I}            if 'retry_request' in str(_bj).lower(): await asyncio.sleep(min(5, 0.3 + _ri * 0.2)); continue`);
+                L.push(`${I}            break`);
+                L.push(`${I}        if _bok: context['vars']['_lzt_spend'] += _price; node = ${bought ? py(bought) : "None"}; _bought = True; break`);
+                L.push(`${I}        node = ${failN || "None"}; break`);
                 L.push(`${I}    except Exception:`);
                 L.push(`${I}        node = ${failN || "None"}; break`);
             } else if (lang === "node") {
@@ -1732,8 +1872,19 @@
                 L.push(`${I}  const _p = parseFloat(_it[${py(sn.priceField || "price")}] || 0);`);
                 L.push(`${I}  const _id = _it[${py(sn.itemField || "item_id")}];`);
                 L.push(`${I}  if (!_id || _p > _maxp || context.vars._lzt_spend + _p > _maxs) continue;`);
-                L.push(`${I}  try { const _rr = await axios.post(\`https://prod-api.lzt.market/\${_id}/fast-buy\`, {}, { params: { price: _p }, headers: HEADERS }); const _d = _rr.data || {}; if (_rr.status < 400 && !(_d.errors && _d.errors.length) && !_d.error) { context.vars._lzt_spend += _p; node = ${bought ? py(bought) : "null"}; _b = true; break; } node = ${failN || "null"}; break; }`);
-                L.push(`${I}  catch(e) { node = ${failN || "null"}; break; }`);
+                L.push(`${I}  try {`);
+                L.push(`${I}    let _ok = false;`);
+                L.push(`${I}    for (let _ri = 0; _ri < 20; _ri++) {`);
+                L.push(`${I}      const _rr = await axios.post(\`https://prod-api.lzt.market/\${_id}/fast-buy\`, { price: _p }, { headers: HEADERS });`);
+                L.push(`${I}      const _d = _rr.data || {};`);
+                L.push(`${I}      _ok = _rr.status < 400 && !(_d.errors && _d.errors.length) && !_d.error;`);
+                L.push(`${I}      if (_ok) break;`);
+                L.push(`${I}      if (/retry_request/i.test(JSON.stringify(_d))) { await new Promise(r => setTimeout(r, Math.min(5000, 300 + _ri * 200))); continue; }`);
+                L.push(`${I}      break;`);
+                L.push(`${I}    }`);
+                L.push(`${I}    if (_ok) { context.vars._lzt_spend += _p; node = ${bought ? py(bought) : "null"}; _b = true; break; }`);
+                L.push(`${I}    node = ${failN || "null"}; break;`);
+                L.push(`${I}  } catch(e) { node = ${failN || "null"}; break; }`);
                 L.push(`${I}}`);
                 L.push(`${I}if (!_b && node === ${skipN || "null"}) node = ${skipN || "null"};`);
             } else if (lang === "bash") {
@@ -1749,8 +1900,15 @@
                 L.push(`${I}  [[ -z "$_iid" || "$_iid" == "null" ]] && continue`);
                 L.push(`${I}  awk -v p="$_price" -v m="$_maxp" 'BEGIN{exit !(p+0>m+0)}' && continue`);
                 L.push(`${I}  awk -v s="${"${VARS[_lzt_spend]:-0}"}" -v p="$_price" -v m="$_maxs" 'BEGIN{exit !(s+0+p+0>m+0)}' && continue`);
-                L.push(`${I}  _code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "$AUTH" "https://prod-api.lzt.market/\${_iid}/fast-buy?price=\${_price}")`);
-                L.push(`${I}  if [[ "$_code" -lt 400 ]]; then VARS[_lzt_spend]=$(awk -v s="${"${VARS[_lzt_spend]:-0}"}" -v p="$_price" 'BEGIN{print s+p}'); node=${bought ? py(bought) : '""'}; _bought=1; break;`);
+                L.push(`${I}  _resp=""; _code=0; _body=""`);
+                L.push(`${I}  for ((_ri=0; _ri<20; _ri++)); do`);
+                L.push(`${I}    _resp=$(curl -s -w "\\n%{http_code}" -X POST -H "$AUTH" -H "Content-Type: application/json" -d "{\\"price\\":$_price}" "https://prod-api.lzt.market/\${_iid}/fast-buy")`);
+                L.push(`${I}    _code=$(echo "$_resp" | tail -n1); _body=$(echo "$_resp" | sed '$d')`);
+                L.push(`${I}    if [[ "$_code" -lt 400 ]] && ! echo "$_body" | grep -qiE '"errors"|"error"'; then break; fi`);
+                L.push(`${I}    echo "$_body" | grep -qi "retry_request" || break`);
+                L.push(`${I}    _w=$((300 + _ri * 200)); [[ $_w -gt 5000 ]] && _w=5000; sleep $(awk -v ms=$_w 'BEGIN{printf "%.3f", ms/1000}')`);
+                L.push(`${I}  done`);
+                L.push(`${I}  if [[ "$_code" -lt 400 ]] && ! echo "$_body" | grep -qiE '"errors"|"error"'; then VARS[_lzt_spend]=$(awk -v s="${"${VARS[_lzt_spend]:-0}"}" -v p="$_price" 'BEGIN{print s+p}'); node=${bought ? py(bought) : '""'}; _bought=1; break;`);
                 L.push(`${I}  else node=${failN || skipN || '""'}; break; fi`);
                 L.push(`${I}done`);
             } else if (lang === "php") {
@@ -1761,9 +1919,15 @@
                 L.push(`${I}foreach ((array)$items as $_it) {`);
                 L.push(`${I}  $price = floatval($_it[${py(sn.priceField || "price")}] ?? 0); $iid = $_it[${py(sn.itemField || "item_id")}] ?? null;`);
                 L.push(`${I}  if (!$iid || $price > $_maxp || $context['vars']['_lzt_spend'] + $price > $_maxs) continue;`);
-                L.push(`${I}  $br = api_call('POST', "https://prod-api.lzt.market/{$iid}/fast-buy", ['price' => (string)$price], null, $TOKEN);`);
-                L.push(`${I}  $_bd = is_array($br['data'] ?? null) ? $br['data'] : [];`);
-                L.push(`${I}  $_bok = (($br['code'] ?? 0) < 400) && empty($_bd['errors']) && empty($_bd['error']);`);
+                L.push(`${I}  $_bok = false;`);
+                L.push(`${I}  for ($_ri = 0; $_ri < 20; $_ri++) {`);
+                L.push(`${I}    $br = api_call('POST', "https://prod-api.lzt.market/{$iid}/fast-buy", null, ['price' => $price], $TOKEN);`);
+                L.push(`${I}    $_bd = is_array($br['data'] ?? null) ? $br['data'] : [];`);
+                L.push(`${I}    $_bok = (($br['code'] ?? 0) < 400) && empty($_bd['errors']) && empty($_bd['error']);`);
+                L.push(`${I}    if ($_bok) break;`);
+                L.push(`${I}    if (stripos(json_encode($_bd), 'retry_request') !== false) { usleep(min(5000000, 300000 + $_ri * 200000)); continue; }`);
+                L.push(`${I}    break;`);
+                L.push(`${I}  }`);
                 L.push(`${I}  if ($_bok) { $context['vars']['_lzt_spend'] += $price; $node = ${bought ? py(bought) : "null"}; $bought = true; break; }`);
                 L.push(`${I}  $node = ${failN || "null"}; break;`);
                 L.push(`${I}}`);
@@ -1779,9 +1943,16 @@
                 L.push(`${I}        var _iid = _it.TryGetProperty(${py(sn.itemField || "item_id")}, out var _idp) ? _idp.ToString() : "";`);
                 L.push(`${I}        double _price = 0; if (_it.TryGetProperty(${py(sn.priceField || "price")}, out var _pp)) double.TryParse(_pp.ToString(), out _price);`);
                 L.push(`${I}        if (string.IsNullOrEmpty(_iid) || _price > _maxp || _spend + _price > _maxs) continue;`);
-                L.push(`${I}        var _br = await http.PostAsync($"https://prod-api.lzt.market/{_iid}/fast-buy?price={_price}", null);`);
-                L.push(`${I}        var _bt = await _br.Content.ReadAsStringAsync(); JsonElement _bd = default; try { _bd = JsonSerializer.Deserialize<JsonElement>(_bt); } catch { }`);
-                L.push(`${I}        bool _bok = _br.IsSuccessStatusCode && !(_bd.ValueKind == JsonValueKind.Object && ((_bd.TryGetProperty("errors", out var _be) && _be.ValueKind == JsonValueKind.Array && _be.GetArrayLength() > 0) || _bd.TryGetProperty("error", out _)));`);
+                L.push(`${I}        bool _bok = false;`);
+                L.push(`${I}        for (int _ri = 0; _ri < 20; _ri++) {`);
+                L.push(`${I}            var _content = new StringContent(JsonSerializer.Serialize(new Dictionary<string,object>{{"price", _price}}), System.Text.Encoding.UTF8, "application/json");`);
+                L.push(`${I}            var _br = await http.PostAsync($"https://prod-api.lzt.market/{_iid}/fast-buy", _content);`);
+                L.push(`${I}            var _bt = await _br.Content.ReadAsStringAsync(); JsonElement _bd = default; try { _bd = JsonSerializer.Deserialize<JsonElement>(_bt); } catch { }`);
+                L.push(`${I}            _bok = _br.IsSuccessStatusCode && !(_bd.ValueKind == JsonValueKind.Object && ((_bd.TryGetProperty("errors", out var _be) && _be.ValueKind == JsonValueKind.Array && _be.GetArrayLength() > 0) || _bd.TryGetProperty("error", out _)));`);
+                L.push(`${I}            if (_bok) break;`);
+                L.push(`${I}            if (_bt.IndexOf("retry_request", StringComparison.OrdinalIgnoreCase) >= 0) { await Task.Delay(Math.Min(5000, 300 + _ri * 200)); continue; }`);
+                L.push(`${I}            break;`);
+                L.push(`${I}        }`);
                 L.push(`${I}        if (_bok) { _spend += _price; vars["_lzt_spend"] = JsonSerializer.SerializeToElement(_spend); node = ${bought ? py(bought) : "null"}; _b = true; break; }`);
                 L.push(`${I}        node = ${failN || "null"}; break;`);
                 L.push(`${I}    }`);
@@ -1795,8 +1966,16 @@
                 L.push(`${I}for _, it := range items { x, ok := it.(map[string]interface{}); if !ok { continue }`);
                 L.push(`${I}  iid := fmt.Sprint(x[${py(sn.itemField || "item_id")}]); price := toFloat(x[${py(sn.priceField || "price")}])`);
                 L.push(`${I}  if iid == "" || iid == "<nil>" || price > _maxp || toFloat(ctx.Vars["_lzt_spend"])+price > _maxs { continue }`);
-                L.push(`${I}  code, data := apiCall("POST", "https://prod-api.lzt.market/"+iid+"/fast-buy", map[string]string{"price": fmt.Sprint(price)}, nil)`);
-                L.push(`${I}  _, hasErr := data["error"]; errs, _ := data["errors"].([]interface{}); bok := code > 0 && code < 400 && !hasErr && len(errs) == 0`);
+                L.push(`${I}  bok := false`);
+                L.push(`${I}  for ri := 0; ri < 20; ri++ {`);
+                L.push(`${I}    code, data := apiCall("POST", "https://prod-api.lzt.market/"+iid+"/fast-buy", nil, map[string]string{"price": fmt.Sprint(price)})`);
+                L.push(`${I}    _, hasErr := data["error"]; errs, _ := data["errors"].([]interface{}); bok = code > 0 && code < 400 && !hasErr && len(errs) == 0`);
+                L.push(`${I}    if bok { break }`);
+                L.push(`${I}    if strings.Contains(strings.ToLower(fmt.Sprint(data)), "retry_request") {`);
+                L.push(`${I}      d := 300 + ri*200; if d > 5000 { d = 5000 }; time.Sleep(time.Duration(d) * time.Millisecond); continue`);
+                L.push(`${I}    }`);
+                L.push(`${I}    break`);
+                L.push(`${I}  }`);
                 L.push(`${I}  if bok { ctx.Vars["_lzt_spend"] = toFloat(ctx.Vars["_lzt_spend"]) + price; node = ${bought ? py(bought) : "null"}; bought = true; break }`);
                 L.push(`${I}  node = ${failN || "null"}; break`);
                 L.push(`${I}} }`);

@@ -54,7 +54,11 @@
         const schema = window.ScenarioNormalize?.scenarioJsonPrompt
             ? "\n" + window.ScenarioNormalize.scenarioJsonPrompt()
             : "";
-        return `Ты — эксперт по LOLZTEAM Market API (prod-api.lzt.market). Отвечай на русском.${schema}
+        const S = window.Scenario;
+        const vars = (window.LZTPathPicker?.collectKnownVars?.(S) || []).map(v => "vars." + v.name).join(", ");
+        const ctx = vars ? `\nИзвестные переменные сценария: ${vars}.` : "";
+        return `Ты — эксперт по LOLZTEAM Market API (prod-api.lzt.market) и Forum API (api.lolz.live / api.zelenka.guru). Отвечай на русском.${schema}
+Форум: темы в last.threads, посты в last.posts; маркет: лоты в last.items. Не путай items и threads.${ctx}
 Правила JSON: nodes + edges {from, fromPort, to}. Координаты x/y не указывай — конструктор расставит блоки сам.`;
     }
 
@@ -66,7 +70,7 @@
                 ? window.Assistant.normalizeApiKey(document.getElementById("ai-api-key").value)
                 : (document.getElementById("ai-api-key").value || "").trim();
             const model = (document.getElementById("ai-model").value || "").trim();
-            if (window.Assistant?.validateAiCredentials) window.Assistant.validateAiCredentials(base, key);
+            if (window.Assistant?.validateAiCredentials) window.Assistant.validateAiCredentials(base, key, model);
             const res = await fetch("/api/ai", {
                 method: "POST", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ base_url: base, api_key: key, model, system: system || aiSystemBase(), prompt })
@@ -436,6 +440,8 @@
                 statusEl.innerHTML = "";
             }
             if (intro) intro.style.display = isExplain ? "none" : "block";
+            const disclaimer = document.getElementById("ai-modal-disclaimer");
+            if (disclaimer) disclaimer.style.display = isExplain ? "none" : "flex";
             document.querySelector(".ai-mode-row").style.display = "flex";
             document.querySelector(".ai-examples").style.display = isCreate ? "flex" : "none";
             syncExplainBar();

@@ -50,7 +50,41 @@ window.ScenarioEditorMixin = {
             const empty = this.nodes.length <= 1;
             mini.style.display = (this.nodes.length >= 5 && !empty) ? "block" : "none";
         }
+        this._renderEmptyChips();
         this.redrawEdges();
+    },
+
+    _renderEmptyChips() {
+        const host = this.viewport || document.getElementById("scenario-viewport");
+        if (!host) return;
+        let el = document.getElementById("canvas-empty-chips");
+        const sparse = this.nodes.length <= 1;
+        if (!sparse) {
+            if (el) el.remove();
+            return;
+        }
+        if (!el) {
+            el = document.createElement("div");
+            el.id = "canvas-empty-chips";
+            el.className = "canvas-empty-chips";
+            host.appendChild(el);
+        }
+        const t = (k, fb) => (window.I18N && I18N.t(k)) || fb;
+        el.innerHTML = `
+            <button type="button" class="canvas-chip canvas-chip-primary" data-ex="demo"><i class="fa-solid fa-flask"></i> ${t("canvas.chip.demo1min", "Демо за 1 мин")}</button>
+            <button type="button" class="canvas-chip" data-ex="cheap"><i class="fa-brands fa-steam"></i> ${t("canvas.chip.cheap", "Поиск дешёвых")}</button>
+            <button type="button" class="canvas-chip" data-ex="bump"><i class="fa-solid fa-arrow-up"></i> ${t("canvas.chip.bump", "Bump")}</button>`;
+        el.querySelectorAll(".canvas-chip").forEach((btn) => {
+            btn.addEventListener("click", async () => {
+                const id = btn.dataset.ex;
+                if (id === "demo" && typeof this.openDemoExample === "function") {
+                    await this.openDemoExample();
+                    return;
+                }
+                const ex = this.examples().find((e) => e.id === id);
+                if (ex) await this.openScenario(ex.build(), { demo: false });
+            });
+        });
     },
 
     // Открыть редактор токена в блоке «Старт» (из шапки приложения)
@@ -73,13 +107,51 @@ window.ScenarioEditorMixin = {
         el.style.left = node.x + "px";
         el.style.top = node.y + "px";
 
+        const readyOpts = {
+            hasToken: !!(window.LZTToken && window.LZTToken.get()),
+            demoMode: !!this._scenarioIsDemo,
+        };
+        const ready = (window.ScenarioValidate && ScenarioValidate.nodeReadiness)
+            ? ScenarioValidate.nodeReadiness(node, readyOpts)
+            : { status: "skip", hint: "" };
+        if (ready.status === "warn") {
+            el.classList.add("snode-cfg-warn");
+            if (ready.hint) el.title = ready.hint;
+        } else if (ready.status === "ok") {
+            el.classList.add("snode-cfg-ok");
+            if (ready.hint) el.title = ready.hint;
+        }
+
         // Шапка (ручка перетаскивания)
         const head = document.createElement("div");
         head.className = "snode-head";
         head.style.setProperty("--accent", def.color);
         head.innerHTML = `<span class="snode-ico" style="color:${def.color};"><i class="fa-solid ${def.icon}"></i></span>
             <span class="snode-type">${def.title}</span>`;
+
+        if (ready.status === "warn" || ready.status === "ok") {
+            const badge = document.createElement("span");
+            badge.className = "snode-cfg-badge " + (ready.status === "ok" ? "ok" : "warn");
+            badge.title = ready.hint || "";
+            badge.innerHTML = ready.status === "ok"
+                ? '<i class="fa-solid fa-check"></i>'
+                : '<i class="fa-solid fa-triangle-exclamation"></i>';
+            head.appendChild(badge);
+        }
+
         if (node.type !== "start") {
+            if (node.type === "request" || node.type === "ai") {
+                const testBtn = document.createElement("button");
+                testBtn.className = "snode-test";
+                testBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
+                testBtn.title = "Протестировать этот шаг";
+                testBtn.addEventListener("mousedown", e => e.stopPropagation());
+                testBtn.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    this.testNode?.(node.id);
+                });
+                head.appendChild(testBtn);
+            }
             const dup = document.createElement("button");
             dup.className = "snode-dup";
             dup.innerHTML = '<i class="fa-regular fa-clone"></i>';
@@ -96,6 +168,9 @@ window.ScenarioEditorMixin = {
             del.addEventListener("click", (e) => { e.stopPropagation(); this.deleteNode(node.id); });
             head.appendChild(del);
         }
+        // badge на старте: отодвинуть вправо как у кнопок
+        const badgeEl = head.querySelector(".snode-cfg-badge");
+        if (badgeEl && node.type === "start") badgeEl.style.marginLeft = "auto";
         el.appendChild(head);
 
         // Тело
@@ -110,7 +185,7 @@ window.ScenarioEditorMixin = {
 
         // Перетаскивание за шапку
         head.addEventListener("mousedown", (e) => {
-            if (e.target.closest(".snode-del")) return;
+            if (e.target.closest(".snode-del, .snode-dup, .snode-test")) return;
             e.stopPropagation();
             this.startNodeDrag(node, e);
         });
@@ -131,8 +206,36 @@ window.ScenarioEditorMixin = {
     refreshStartNode() {
         const startNode = this.nodes.find(n => n.type === "start");
         if (!startNode || !this.nodesLayer) return;
-        const el = this.nodesLayer.querySelector(`[data-node="${startNode.id}"] .snode-body`);
-        if (el) el.innerHTML = this.nodeBodyHtml(startNode);
+        const body = this.nodesLayer.querySelector(`[data-node="${startNode.id}"] .snode-body`);
+        if (body) body.innerHTML = this.nodeBodyHtml(startNode);
+        const card = this.nodesLayer.querySelector(`[data-node="${startNode.id}"]`);
+        if (!card) return;
+        card.classList.remove("snode-cfg-warn", "snode-cfg-ok");
+        const ready = window.ScenarioValidate?.nodeReadiness?.(startNode, {
+            hasToken: !!(window.LZTToken && window.LZTToken.get()),
+            demoMode: !!this._scenarioIsDemo,
+        }) || { status: "skip" };
+        let badge = card.querySelector(".snode-cfg-badge");
+        if (ready.status === "warn" || ready.status === "ok") {
+            card.classList.add(ready.status === "ok" ? "snode-cfg-ok" : "snode-cfg-warn");
+            card.title = ready.hint || "";
+            if (!badge) {
+                badge = document.createElement("span");
+                badge.className = "snode-cfg-badge";
+                badge.style.marginLeft = "auto";
+                const head = card.querySelector(".snode-head");
+                head?.appendChild(badge);
+            }
+            badge.className = "snode-cfg-badge " + (ready.status === "ok" ? "ok" : "warn");
+            badge.style.marginLeft = "auto";
+            badge.title = ready.hint || "";
+            badge.innerHTML = ready.status === "ok"
+                ? '<i class="fa-solid fa-check"></i>'
+                : '<i class="fa-solid fa-triangle-exclamation"></i>';
+        } else if (badge) {
+            badge.remove();
+            card.title = "";
+        }
     },
 
     nodeBodyHtml(node) {
@@ -202,10 +305,26 @@ window.ScenarioEditorMixin = {
             const short = this.shortUrl(req.url || "");
             const method = req.method || "GET";
             const mColor = { GET: "#2cb674", POST: "#3594bc", PUT: "#e6a23c", DELETE: "#ff5555" }[method] || "#2cb674";
-            const pc = Object.keys(req.params || {}).length + (req.body ? Object.keys(req.body).length : 0);
+            const params = req.params || {};
+            const keyNames = ["pmin", "pmax", "order_by", "forum_id", "thread_id", "page", "limit", "title", "game[]", "currency"];
+            const bits = keyNames
+                .filter((k) => params[k] != null && String(params[k]) !== "")
+                .slice(0, 4)
+                .map((k) => `${k}=${params[k]}`);
+            const extra = Object.keys(params).filter((k) => !keyNames.includes(k)).length;
+            if (extra > 0 && bits.length < 4) bits.push(`+${extra}`);
+            else if (extra > 0) bits[bits.length - 1] = (bits[bits.length - 1] || "") + ` +${extra}`;
+            let bodyHint = "";
+            if (req.body != null && req.body !== "") {
+                if (typeof req.body === "object") {
+                    const keys = Object.keys(req.body).slice(0, 3);
+                    bodyHint = keys.length ? `body: ${keys.join(", ")}` : "body";
+                } else bodyHint = "body";
+            }
+            const meta = [bits.length ? bits.join(" · ") : "", bodyHint].filter(Boolean).join(" · ");
             return `<div class="snode-req-title">${this.esc(req.title || "Запрос")}</div>
                 <div class="snode-req-url"><span class="snode-method" style="color:${mColor};">${method}</span> <span>${this.esc(short || "URL не задан")}</span></div>
-                ${pc ? `<div class="snode-muted">${pc} парам.</div>` : ""}
+                ${meta ? `<div class="snode-req-meta">${this.esc(meta)}</div>` : ""}
                 <div class="snode-edit-hint"><i class="fa-solid fa-pen"></i> нажмите, чтобы настроить</div>`;
         }
         if (node.type === "foreach") {
